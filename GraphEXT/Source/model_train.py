@@ -33,7 +33,8 @@ def main():
     parser.add_argument('--dataset', type=str, default='Graph-Twitter', 
                         choices=['BA_shapes', 'BA_LRP', 'BBBP', 'ClinTox', 'Graph-SST2', 'Graph-Twitter'])
     parser.add_argument('--model_used', type=str, default='GCN_3l', 
-                        choices=['GCN_2l', 'GCN_3l', 'GIN_2l', 'GIN_3l'])
+                        choices=['GCN_2l', 'GCN_3l', 'GIN_2l', 'GIN_3l',
+                                'PolyGNN_2l', 'PolyGNN_3l', 'PolyGIN_2l', 'PolyGIN_3l'])
     parser.add_argument('--epochs', type=int, default=70)
     parser.add_argument('--dim_hidden', type=int, default=300)
     parser.add_argument('--lr', type=float, default=1e-3)
