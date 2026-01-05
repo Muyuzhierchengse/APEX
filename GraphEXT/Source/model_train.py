@@ -6,7 +6,10 @@ from dataset.data import *
 import argparse
 from torch.nn.functional import cross_entropy
 from torch_geometric.loader import DataLoader
+import functools
+torch.load = functools.partial(torch.load, weights_only=False)
 
+#tar -xf "C:\Users\feng\Documents\GitHub\PolyGNN\dataset\Graph-SST2.zip" -C "C:\Users\feng\Documents\GitHub\PolyGNN\dataset"   解压缩命令
 
 def accuracy(pred, y):
     return (pred == y).sum() / y.shape[0]
@@ -37,7 +40,7 @@ def main():
                                 'PolyGNN_2l', 'PolyGNN_3l', 'PolyGIN_2l', 'PolyGIN_3l'])
     parser.add_argument('--epochs', type=int, default=70)
     parser.add_argument('--dim_hidden', type=int, default=300)
-    parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--lr', type=float, default=1e-4)
     args = parser.parse_args()
 
     data_path = './dataset'

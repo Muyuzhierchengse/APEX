@@ -5,6 +5,14 @@ import os.path as osp
 import scipy.sparse as ssp
 import time
 import torch
+try:
+    from torch_geometric.data.data import DataEdgeAttr
+    torch.serialization.add_safe_globals([DataEdgeAttr])
+except ImportError:
+    pass
+
+import functools
+torch.load = functools.partial(torch.load, weights_only=False)
 import torch_geometric
 from model.models import *
 from dataset.data import *
@@ -18,7 +26,6 @@ from torch_geometric.utils import add_self_loops
 from torch_geometric.loader import DataLoader
 
 from dig.xgraph.utils.compatibility import compatible_state_dict
-
 
 def main():
     parser = argparse.ArgumentParser()
