@@ -1006,10 +1006,13 @@ class PolyGNN_3l(GNNBasic):
             self.readout = GlobalMeanPool()
         
         # Final feed-forward network
-        self.ffn = nn.Sequential(*(
-            [nn.Linear(dim_hidden, dim_hidden)] +
-            [nn.ReLU(), self.dropout, nn.Linear(dim_hidden, num_classes)]
-        ))
+        self.ffn = nn.Sequential(
+            nn.Linear(dim_hidden, dim_hidden),
+            nn.LayerNorm(dim_hidden),
+            PolyActivation(dim_hidden, degree=poly_degree),
+            self.dropout,
+            nn.Linear(dim_hidden, num_classes)
+        )
         
         # Store polynomial degree for attribution
         self.poly_degree = poly_degree
@@ -1236,11 +1239,9 @@ class PolyActivation(nn.Module):
 # PolyGNN with GIN convolution
 # ============================================================================
 
+'''
 class PolyGIN_3l(GNNBasic):
-    """
-    PolyGNN with GIN convolution layers.
-    """
-    
+
     def __init__(self, model_level, dim_node, dim_hidden, num_classes, poly_degree=3):
         super().__init__()
         num_layer = 3
@@ -1268,23 +1269,22 @@ class PolyGIN_3l(GNNBasic):
                 for _ in range(num_layer - 1)
             ]
         )
-        
-        # Dropout
+
         self.dropout = nn.Dropout()
-        
-        # Readout layer
+
         if model_level == 'node':
             self.readout = IdenticalPool()
         else:
             self.readout = GlobalMeanPool()
         
-        # Final feed-forward network
-        self.ffn = nn.Sequential(*(
-            [nn.Linear(dim_hidden, dim_hidden)] +
-            [nn.ReLU(), self.dropout, nn.Linear(dim_hidden, num_classes)]
-        ))
+        self.ffn = nn.Sequential(
+            nn.Linear(dim_hidden, dim_hidden),
+            nn.LayerNorm(dim_hidden),
+            PolyActivation(dim_hidden, degree=poly_degree),
+            self.dropout,
+            nn.Linear(dim_hidden, num_classes)
+        )
         
-        # Store polynomial degree
         self.poly_degree = poly_degree
     
     def forward(self, *args, **kwargs) -> torch.Tensor:
@@ -1294,13 +1294,11 @@ class PolyGIN_3l(GNNBasic):
         h1 = self.conv1(x, edge_index)
         h1 = self.dropout(h1)
         
-        # Subsequent layers
         h = h1
         for conv in self.convs:
             h = conv(h, edge_index)
             h = self.dropout(h)
         
-        # Readout and classification
         out_readout = self.readout(h, batch)
         out = self.ffn(out_readout)
         
@@ -1312,6 +1310,86 @@ class PolyGIN_3l(GNNBasic):
         h = self.conv1(x, edge_index)
         for conv in self.convs:
             h = conv(h, edge_index)
+        
+        return h
+'''
+
+class PolyGIN_3l(GNNBasic):
+    
+    def __init__(self, model_level, dim_node, dim_hidden, num_classes, poly_degree=3):
+        super().__init__()
+        num_layer = 3
+        
+       
+        self.conv1 = GINConv(
+            nn.Sequential(
+                nn.Linear(dim_node, dim_hidden),
+                PolyActivation(dim_hidden, degree=poly_degree),
+                nn.Linear(dim_hidden, dim_hidden),
+                PolyActivation(dim_hidden, degree=poly_degree)
+            )
+        )
+        
+        self.convs = nn.ModuleList(
+            [
+                GINConv(
+                    nn.Sequential(
+                        nn.Linear(dim_hidden, dim_hidden),
+                        PolyActivation(dim_hidden, degree=poly_degree),
+                        nn.Linear(dim_hidden, dim_hidden),
+                        PolyActivation(dim_hidden, degree=poly_degree)
+                    )
+                )
+                for _ in range(num_layer - 1)
+            ]
+        )
+        
+        self.norms = nn.ModuleList(
+            [nn.LayerNorm(dim_hidden) for _ in range(num_layer)]
+        )
+        
+        self.dropout = nn.Dropout(0.5)  
+        
+        if model_level == 'node':
+            self.readout = IdenticalPool()
+        else:
+            self.readout = GlobalMeanPool()
+        
+        # 简化FFN
+        self.ffn = nn.Sequential(
+            nn.Linear(dim_hidden, dim_hidden),
+            PolyActivation(dim_hidden, degree=poly_degree),
+            nn.Dropout(0.5),
+            nn.Linear(dim_hidden, num_classes)
+        )
+        
+        self.poly_degree = poly_degree
+    
+    def forward(self, *args, **kwargs) -> torch.Tensor:
+        x, edge_index, batch = self.arguments_read(*args, **kwargs)
+        
+        h = self.conv1(x, edge_index)
+        h = self.norms[0](h) 
+        h = self.dropout(h)
+        
+        for i, conv in enumerate(self.convs):
+            h = conv(h, edge_index)
+            h = self.norms[i+1](h)  
+            h = self.dropout(h)
+        
+        out_readout = self.readout(h, batch)
+        out = self.ffn(out_readout)
+        
+        return out
+    
+    def get_emb(self, *args, **kwargs) -> torch.Tensor:
+        x, edge_index, batch = self.arguments_read(*args, **kwargs)
+        
+        h = self.conv1(x, edge_index)
+        h = self.norms[0](h)
+        for i, conv in enumerate(self.convs):
+            h = conv(h, edge_index)
+            h = self.norms[i+1](h)
         
         return h
 
