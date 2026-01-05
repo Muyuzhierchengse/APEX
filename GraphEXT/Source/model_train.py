@@ -8,7 +8,7 @@ from torch.nn.functional import cross_entropy
 from torch_geometric.loader import DataLoader
 import functools
 torch.load = functools.partial(torch.load, weights_only=False)
-
+import time
 #tar -xf "C:\Users\feng\Documents\GitHub\PolyGNN\dataset\Graph-SST2.zip" -C "C:\Users\feng\Documents\GitHub\PolyGNN\dataset"   解压缩命令
 
 def accuracy(pred, y):
@@ -30,6 +30,8 @@ def accuracy_dataloader(device, model, dataloader):
     y = torch.cat(y, dim=0)
     return (pred == y).sum() / y.shape[0]
 
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -37,10 +39,10 @@ def main():
                         choices=['BA_shapes', 'BA_LRP', 'BBBP', 'ClinTox', 'Graph-SST2', 'Graph-Twitter'])
     parser.add_argument('--model_used', type=str, default='GCN_3l', 
                         choices=['GCN_2l', 'GCN_3l', 'GIN_2l', 'GIN_3l',
-                                'PolyGNN_2l', 'PolyGNN_3l', 'PolyGIN_2l', 'PolyGIN_3l'])
-    parser.add_argument('--epochs', type=int, default=70)
+                                'PolyGNN_2l', 'PolyGNN_3l', 'PolyGIN_2l', 'PolyGIN_3l','QPolyGIN_3l'])
+    parser.add_argument('--epochs', type=int, default=7000)
     parser.add_argument('--dim_hidden', type=int, default=300)
-    parser.add_argument('--lr', type=float, default=1e-4)
+    parser.add_argument('--lr', type=float, default=5e-5) #5e-5
     args = parser.parse_args()
 
     data_path = './dataset'
@@ -56,10 +58,12 @@ def main():
         model_level = 'node'
         model = eval(args.model_used)(model_level=model_level, dim_node=dim_node,
                                 dim_hidden=args.dim_hidden, num_classes=num_classes).to(device)
+        print(f'Model parameters: {count_parameters(model):,}')
         optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr, weight_decay=5e-4)
         data = data.to(device)
-
+        epoch_times = []
         for epoch in range(1, args.epochs + 1):
+            start_time = time.time() 
             model.train()
             optimizer.zero_grad()
             pred = model(data.x, data.edge_index)
@@ -74,31 +78,37 @@ def main():
                     f'train_acc = {accuracy(pred[data.train_mask], data.y[data.train_mask]):.4f}, ',
                     f'valid_acc = {accuracy(pred[data.val_mask], data.y[data.val_mask]):.4f}, ',
                     f'test_acc = {accuracy(pred[data.test_mask], data.y[data.test_mask]):.4f}',)
-        
+
+            epoch_times.append(time.time() - start_time)
+        print(f'Average epoch time: {sum(epoch_times) / len(epoch_times):.4f}s')
         torch.save(model.state_dict(), model_save_path)
         
     else:
         model_level = 'graph'
         model = eval(args.model_used)(model_level=model_level, dim_node=dim_node,
                             dim_hidden=args.dim_hidden, num_classes=num_classes).to(device)
+        print(f'Model parameters: {count_parameters(model):,}')
         optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr, weight_decay=5e-4)
 
         train_loader = DataLoader(data['train'], batch_size=1, shuffle=True)
         valid_loader = DataLoader(data['val'], batch_size=1, shuffle=True)
         test_loader = DataLoader(data['test'], batch_size=1, shuffle=True)
 
-        sum = 0
+
+        total_nodes = 0
         for data in train_loader:
-            sum += data.num_nodes
+            total_nodes += data.num_nodes
         for data in valid_loader:
-            sum += data.num_nodes
+            total_nodes += data.num_nodes
         for data in test_loader:
-            sum += data.num_nodes
-        print(len(train_loader) + len(valid_loader) + len(test_loader), sum)
+            total_nodes += data.num_nodes
+        print(len(train_loader) + len(valid_loader) + len(test_loader), total_nodes)
         # exit(0)
 
         best = 0
+        epoch_times = [] 
         for epoch in range(1, args.epochs + 1):
+            start_time = time.time()
             model.train()
             total_loss = 0
             for data in train_loader:
@@ -125,7 +135,8 @@ def main():
             if epoch > args.epochs // 2 and acc_test >= best:
                 best = acc_test
                 torch.save(model.state_dict(), model_save_path)
-            
+            epoch_times.append(time.time() - start_time) 
+        print(f'Average epoch time: {sum(epoch_times) / len(epoch_times):.4f}s')     
         print('best test acc:', best)
 
 
