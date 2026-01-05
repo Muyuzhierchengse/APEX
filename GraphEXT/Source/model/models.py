@@ -1471,3 +1471,151 @@ class PolyGIN_2l(GNNBasic):
             h = conv(h, edge_index)
         
         return h
+
+
+
+from torch_geometric.nn import GINConv
+
+class QPolyGIN_3l(GNNBasic):
+    
+    def __init__(self, model_level, dim_node, dim_hidden, num_classes, poly_degree=3):
+        super().__init__()
+        num_layer = 3
+        
+        self.conv1 = GINConv(
+            nn.Sequential(
+                nn.Linear(dim_node, dim_hidden),
+                QinPolyActivation(dim_hidden, degree=poly_degree),
+                nn.Linear(dim_hidden, dim_hidden),
+                QinPolyActivation(dim_hidden, degree=poly_degree)
+            )
+        )
+        
+        self.convs = nn.ModuleList(
+            [
+                GINConv(
+                    nn.Sequential(
+                        nn.Linear(dim_hidden, dim_hidden),
+                        QinPolyActivation(dim_hidden, degree=poly_degree),
+                        nn.Linear(dim_hidden, dim_hidden),
+                        QinPolyActivation(dim_hidden, degree=poly_degree)
+                    )
+                )
+                for _ in range(num_layer - 1)
+            ]
+        )
+        
+        self.norms = nn.ModuleList(
+            [nn.LayerNorm(dim_hidden) for _ in range(num_layer)]
+        )
+        
+        self.dropout = nn.Dropout(0.5)  
+        
+        if model_level == 'node':
+            self.readout = IdenticalPool()
+        else:
+            self.readout = GlobalMeanPool()
+        
+        self.ffn = nn.Sequential(
+            nn.Linear(dim_hidden, dim_hidden),
+            QinPolyActivation(dim_hidden, degree=poly_degree),
+            nn.Dropout(0.5),
+            nn.Linear(dim_hidden, num_classes)
+        )
+        
+        self.poly_degree = poly_degree
+    
+    def forward(self, *args, **kwargs) -> torch.Tensor:
+        x, edge_index, batch = self.arguments_read(*args, **kwargs)
+        
+        h = self.conv1(x, edge_index)
+        h = self.norms[0](h) 
+        h = self.dropout(h)
+        
+        for i, conv in enumerate(self.convs):
+            h = conv(h, edge_index)
+            h = self.norms[i+1](h)  
+            h = self.dropout(h)
+        
+        out_readout = self.readout(h, batch)
+        out = self.ffn(out_readout)
+        
+        return out
+    
+    def get_emb(self, *args, **kwargs) -> torch.Tensor:
+        x, edge_index, batch = self.arguments_read(*args, **kwargs)
+        
+        h = self.conv1(x, edge_index)
+        h = self.norms[0](h)
+        for i, conv in enumerate(self.convs):
+            h = conv(h, edge_index)
+            h = self.norms[i+1](h)
+        
+        return h
+
+
+class QinPolyActivation(nn.Module):
+    """
+    Learnable polynomial activation function using Horner's method (Qin Jiushao algorithm).
+    P(x) = a_1 * x + a_2 * x^2 + ... + a_k * x^k
+    
+    Using Horner's method:
+    P(x) = x * (a_1 + x * (a_2 + x * (a_3 + ... + x * a_k)))
+    
+    This reduces the number of multiplications from O(k^2) to O(k).
+    """
+    
+    def __init__(self, dim, degree=3):
+        super().__init__()
+        self.dim = dim
+        self.degree = degree
+        
+        # Learnable polynomial coefficients (scalars shared across all features)
+        # Stored in reverse order for Horner's method: [a_k, a_{k-1}, ..., a_2, a_1]
+        self.coeffs = nn.Parameter(torch.zeros(degree))
+        
+        # Initialize coefficients to approximate ReLU near zero
+        with torch.no_grad():
+            self.coeffs[-1] = 1.0  # a_1 (linear term) at the end
+            # Initialize higher-order terms with small random values
+            self.coeffs[:-1] = torch.randn(degree - 1) * 0.01
+        
+        # Epsilon for numerical stability
+        self.eps = 1e-8
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Apply polynomial transformation using Horner's method (秦九韶算法).
+        x: tensor of shape [batch_size, dim] or [num_nodes, dim]
+        
+        For a polynomial P(x) = a_1*x + a_2*x^2 + a_3*x^3:
+        Horner's form: P(x) = x * (a_1 + x * (a_2 + x * a_3))
+        
+        Algorithm:
+        1. result = a_k (highest degree coefficient)
+        2. result = result * x + a_{k-1}
+        3. result = result * x + a_{k-2}
+        4. ...
+        5. result = result * x (final multiplication)
+        """
+        # Start with the highest degree coefficient
+        result = self.coeffs[0]
+        
+        # Apply Horner's method: repeatedly multiply by x and add next coefficient
+        for i in range(1, self.degree):
+            result = result * x + self.coeffs[i]
+        
+        # Final multiplication by x (since we want a_1*x + a_2*x^2 + ... + a_k*x^k)
+        result = result * x
+        
+        return result
+    
+    def get_coefficients(self) -> torch.Tensor:
+        """
+        Get the polynomial coefficients in standard order [a_1, a_2, ..., a_k].
+        """
+        # Reverse the coefficients to get standard order
+        return self.coeffs.flip(0).clone()
+    
+    def extra_repr(self) -> str:
+        return f'dim={self.dim}, degree={self.degree}, method=Horner'
