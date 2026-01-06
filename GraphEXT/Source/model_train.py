@@ -1,6 +1,8 @@
 import os
 import os.path as osp
 import torch
+import numpy as np
+import random
 from model.models import *
 from dataset.data import *
 import argparse
@@ -9,11 +11,19 @@ from torch_geometric.loader import DataLoader
 import functools
 torch.load = functools.partial(torch.load, weights_only=False)
 import time
-#tar -xf "C:\Users\feng\Documents\GitHub\PolyGNN\dataset\Graph-SST2.zip" -C "C:\Users\feng\Documents\GitHub\PolyGNN\dataset"   解压缩命令
+from datetime import datetime
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 def accuracy(pred, y):
     return (pred == y).sum() / y.shape[0]
-
 
 def accuracy_dataloader(device, model, dataloader):
     pred, y = [], []
@@ -40,105 +50,154 @@ def main():
     parser.add_argument('--model_used', type=str, default='GCN_3l', 
                         choices=['GCN_2l', 'GCN_3l', 'GIN_2l', 'GIN_3l',
                                 'PolyGNN_2l', 'PolyGNN_3l', 'PolyGIN_2l', 'PolyGIN_3l','QPolyGIN_3l'])
-    parser.add_argument('--epochs', type=int, default=7000)
+    parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--dim_hidden', type=int, default=300)
-    parser.add_argument('--lr', type=float, default=5e-5) #5e-5
+    parser.add_argument('--lr', type=float, default=5e-5)
     args = parser.parse_args()
 
     data_path = './dataset'
     checkpoint_path = osp.join('model', 'checkpoint', args.dataset)
     if not osp.exists(checkpoint_path):
         os.makedirs(checkpoint_path)
-    model_save_path = osp.join(checkpoint_path, args.model_used + '.pkl')
+    
+    output_path = './output'
+    if not osp.exists(output_path):
+        os.makedirs(output_path)
+    
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_filename = f'{args.dataset}_{args.model_used}_{timestamp}.txt'
+    log_filepath = osp.join(output_path, log_filename)
+    
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
     data, num_nodes, dim_node, num_classes = load_dataset(data_path, args.dataset)
 
-    if args.dataset in ['BA_shapes']:
-        model_level = 'node'
-        model = eval(args.model_used)(model_level=model_level, dim_node=dim_node,
-                                dim_hidden=args.dim_hidden, num_classes=num_classes).to(device)
-        print(f'Model parameters: {count_parameters(model):,}')
-        optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr, weight_decay=5e-4)
-        data = data.to(device)
-        epoch_times = []
-        for epoch in range(1, args.epochs + 1):
-            start_time = time.time() 
-            model.train()
-            optimizer.zero_grad()
-            pred = model(data.x, data.edge_index)
-            loss = cross_entropy(pred[data.train_mask], data.y[data.train_mask])
-            loss.backward()
-            optimizer.step()
+    with open(log_filepath, 'w', encoding='utf-8') as log_file:
 
-            if epoch % 10 == 0:
-                model.eval()
-                pred = model(data.x, data.edge_index).argmax(dim=1)
-                print(f'epoch #{epoch:3d}, loss = {loss:.4f}, ', 
-                    f'train_acc = {accuracy(pred[data.train_mask], data.y[data.train_mask]):.4f}, ',
-                    f'valid_acc = {accuracy(pred[data.val_mask], data.y[data.val_mask]):.4f}, ',
-                    f'test_acc = {accuracy(pred[data.test_mask], data.y[data.test_mask]):.4f}',)
-
-            epoch_times.append(time.time() - start_time)
-        print(f'Average epoch time: {sum(epoch_times) / len(epoch_times):.4f}s')
-        torch.save(model.state_dict(), model_save_path)
+        log_file.write(f'实验配置\n')
+        log_file.write(f'{"="*80}\n')
+        log_file.write(f'数据集: {args.dataset}\n')
+        log_file.write(f'模型: {args.model_used}\n')
+        log_file.write(f'训练轮数: {args.epochs}\n')
+        log_file.write(f'隐藏层维度: {args.dim_hidden}\n')
+        log_file.write(f'学习率: {args.lr}\n')
+        log_file.write(f'设备: {device}\n')
+        log_file.write(f'{"="*80}\n\n')
         
-    else:
-        model_level = 'graph'
-        model = eval(args.model_used)(model_level=model_level, dim_node=dim_node,
-                            dim_hidden=args.dim_hidden, num_classes=num_classes).to(device)
-        print(f'Model parameters: {count_parameters(model):,}')
-        optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr, weight_decay=5e-4)
+        for seed in range(1):
+            separator = f'\n{"="*80}\n'
+            seed_info = f'随机种子 {seed} 的训练结果\n'
+            print(separator + seed_info + "="*80)
+            log_file.write(separator + seed_info + "="*80 + '\n')
+            
+            set_seed(seed)
+            model_save_path = osp.join(checkpoint_path, args.model_used + f'_seed{seed}.pkl')
 
-        train_loader = DataLoader(data['train'], batch_size=1, shuffle=True)
-        valid_loader = DataLoader(data['val'], batch_size=1, shuffle=True)
-        test_loader = DataLoader(data['test'], batch_size=1, shuffle=True)
-
-
-        total_nodes = 0
-        for data in train_loader:
-            total_nodes += data.num_nodes
-        for data in valid_loader:
-            total_nodes += data.num_nodes
-        for data in test_loader:
-            total_nodes += data.num_nodes
-        print(len(train_loader) + len(valid_loader) + len(test_loader), total_nodes)
-        # exit(0)
-
-        best = 0
-        epoch_times = [] 
-        for epoch in range(1, args.epochs + 1):
-            start_time = time.time()
-            model.train()
-            total_loss = 0
-            for data in train_loader:
-                optimizer.zero_grad()
+            if args.dataset in ['BA_shapes']:
+                model_level = 'node'
+                model = eval(args.model_used)(model_level=model_level, dim_node=dim_node,
+                                        dim_hidden=args.dim_hidden, num_classes=num_classes).to(device)
+                param_info = f'模型参数量: {count_parameters(model):,}\n'
+                print(param_info)
+                log_file.write(param_info)
+                
+                optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr, weight_decay=5e-4)
                 data = data.to(device)
-                x = data.x
-                edge_index = data.edge_index
-                batch = data.batch
+                epoch_times = []
+                
+                for epoch in range(1, args.epochs + 1):
+                    start_time = time.time() 
+                    model.train()
+                    optimizer.zero_grad()
+                    pred = model(data.x, data.edge_index)
+                    loss = cross_entropy(pred[data.train_mask], data.y[data.train_mask])
+                    loss.backward()
+                    optimizer.step()
 
-                logits = model(x, edge_index, batch)
-                loss = cross_entropy(logits, data.y.view(-1)).to(device)
-                loss.backward()
-                optimizer.step()
+                    if epoch % 10 == 0:
+                        model.eval()
+                        pred = model(data.x, data.edge_index).argmax(dim=1)
+                        output = (f'epoch #{epoch:3d}, loss = {loss:.4f}, '
+                                f'train_acc = {accuracy(pred[data.train_mask], data.y[data.train_mask]):.4f}, '
+                                f'valid_acc = {accuracy(pred[data.val_mask], data.y[data.val_mask]):.4f}, '
+                                f'test_acc = {accuracy(pred[data.test_mask], data.y[data.test_mask]):.4f}')
+                        print(output)
+                        log_file.write(output + '\n')
 
-                total_loss += loss * data.num_graphs
-            
-            model.eval()
-            acc_test = accuracy_dataloader(device, model, test_loader)
-            print(f'epoch #{epoch:3d}, loss = {total_loss / len(train_loader):.4f}, ', 
-                f'train_acc = {accuracy_dataloader(device, model, train_loader):.4f}, ',
-                f'valid_acc = {accuracy_dataloader(device, model, valid_loader):.4f}, ',
-                f'test_acc = {acc_test:.4f}',)
-            
-            if epoch > args.epochs // 2 and acc_test >= best:
-                best = acc_test
+                    epoch_times.append(time.time() - start_time)
+                
+                avg_time = f'平均每轮训练时间: {sum(epoch_times) / len(epoch_times):.4f}秒\n'
+                print(avg_time)
+                log_file.write(avg_time)
                 torch.save(model.state_dict(), model_save_path)
-            epoch_times.append(time.time() - start_time) 
-        print(f'Average epoch time: {sum(epoch_times) / len(epoch_times):.4f}s')     
-        print('best test acc:', best)
+                
+            else:
+                model_level = 'graph'
+                model = eval(args.model_used)(model_level=model_level, dim_node=dim_node,
+                                    dim_hidden=args.dim_hidden, num_classes=num_classes).to(device)
+                param_info = f'模型参数量: {count_parameters(model):,}\n'
+                print(param_info)
+                log_file.write(param_info)
+                
+                optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr, weight_decay=5e-4)
 
+                train_loader = DataLoader(data['train'], batch_size=1, shuffle=True)
+                valid_loader = DataLoader(data['val'], batch_size=1, shuffle=True)
+                test_loader = DataLoader(data['test'], batch_size=1, shuffle=True)
+
+                total_nodes = 0
+                for data_item in train_loader:
+                    total_nodes += data_item.num_nodes
+                for data_item in valid_loader:
+                    total_nodes += data_item.num_nodes
+                for data_item in test_loader:
+                    total_nodes += data_item.num_nodes
+                
+                dataset_info = f'总图数量: {len(train_loader) + len(valid_loader) + len(test_loader)}, 总节点数: {total_nodes}\n'
+                print(dataset_info.strip())
+                log_file.write(dataset_info)
+
+                best = 0
+                epoch_times = [] 
+                for epoch in range(1, args.epochs + 1):
+                    start_time = time.time()
+                    model.train()
+                    total_loss = 0
+                    for data_item in train_loader:
+                        optimizer.zero_grad()
+                        data_item = data_item.to(device)
+                        x = data_item.x
+                        edge_index = data_item.edge_index
+                        batch = data_item.batch
+
+                        logits = model(x, edge_index, batch)
+                        loss = cross_entropy(logits, data_item.y.view(-1)).to(device)
+                        loss.backward()
+                        optimizer.step()
+
+                        total_loss += loss * data_item.num_graphs
+                    
+                    model.eval()
+                    acc_test = accuracy_dataloader(device, model, test_loader)
+                    output = (f'epoch #{epoch:3d}, loss = {total_loss / len(train_loader):.4f}, '
+                            f'train_acc = {accuracy_dataloader(device, model, train_loader):.4f}, '
+                            f'valid_acc = {accuracy_dataloader(device, model, valid_loader):.4f}, '
+                            f'test_acc = {acc_test:.4f}')
+                    print(output)
+                    log_file.write(output + '\n')
+                    
+                    if epoch > args.epochs // 2 and acc_test >= best:
+                        best = acc_test
+                        torch.save(model.state_dict(), model_save_path)
+                    epoch_times.append(time.time() - start_time)
+                
+                avg_time = f'平均每轮训练时间: {sum(epoch_times) / len(epoch_times):.4f}秒\n'
+                best_acc = f'最佳测试准确率: {best:.4f}\n'
+                print(avg_time + best_acc)
+                log_file.write(avg_time + best_acc)
+            
+            log_file.flush()  
+    
+    print(f'\n训练日志已保存到: {log_filepath}')
 
 if __name__ == '__main__':
     main()
