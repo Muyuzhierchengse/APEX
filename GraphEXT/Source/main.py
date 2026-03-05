@@ -1,21 +1,22 @@
 import argparse
 import os
-import hydra
 import os.path as osp
-import scipy.sparse as ssp
-import time
+import re
+import functools
+from collections import OrderedDict
+import numpy as np
 import torch
-from method.fsx import FSX
+from torch_geometric.loader import DataLoader
+from torch_geometric import __version__
+
 try:
     from torch_geometric.data.data import DataEdgeAttr
-
     torch.serialization.add_safe_globals([DataEdgeAttr])
 except ImportError:
     pass
 
-import functools
 torch.load = functools.partial(torch.load, weights_only=False)
-import torch_geometric
+
 from model.models import *
 from dataset.data import *
 from method.flowx import FlowX
@@ -23,97 +24,152 @@ from method.graphext import GraphEXT
 from method.gnnexplainer import GNNExplainer
 from method.gradcam import GradCAM
 from method.pgexplainer import PGExplainer
-from method.evaluation import *
-from torch_geometric.utils import add_self_loops
-from torch_geometric.loader import DataLoader
+from method.fsx import FSX
+from method.evaluation import get_node_mask_from_edge_mask, eval_related_pred
+
 
 def compatible_state_dict(state_dict):
-    comp_state_dict = OrderedDict()
+    """修复新版 PyG 中 GCNConv weight 键名及形状变化。"""
+    comp = OrderedDict()
     for key, value in state_dict.items():
-        comp_key = key
-        comp_value = value
-        if int(__version__[0]) >= 2:
-            comp_key = re.sub(r'conv(1|s.[0-9]).weight', 'conv\g<1>.lin.weight', key)
-            if comp_key != key:
-                comp_value = value.T
-        if comp_key != key:
-            comp_state_dict[key] = value
-        comp_state_dict[comp_key] = comp_value
-    return comp_state_dict
+        new_key = re.sub(r'conv(1|s\.[0-9]+)\.weight',
+                         r'conv\1.lin.weight', key)
+        comp[new_key] = value.T if new_key != key else value
+    return comp
+
+def set_seed(seed=0):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 def main():
+    set_seed(0)
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', type=str, default='BBBP', 
-                        choices=[ 'BBBP', 'ClinTox', 'Graph-SST2', 'Graph-Twitter'])
-    parser.add_argument('--model_used', type=str, default='GIN_3l', 
+    parser.add_argument('--dataset', type=str, default='BBBP',
+                        choices=['BBBP', 'ClinTox', 'Graph-SST2', 'Graph-Twitter','BA_2Motifs','BACE','Tox21','ToxCast'])
+    parser.add_argument('--model_used', type=str, default='GIN_3l',
                         choices=['GCN_2l', 'GCN_3l', 'GIN_2l', 'GIN_3l'])
-    parser.add_argument('--explainer', type=str, default='GNNExplainer',
-                        choices=['FlowX', 'GNNExplainer', 'GraphEXT', 'PGExplainer', 'FSX'])
-    parser.add_argument('--sparsity', type=float, default=0.6)
+    parser.add_argument('--explainer', type=str, default='GradCAM',
+                        choices=['FlowX', 'GNNExplainer', 'GraphEXT',
+                                 'PGExplainer', 'GradCAM', 'FSX'])
+    parser.add_argument('--sparsity', type=float, default=0.5)
     parser.add_argument('--dim_hidden', type=int, default=300)
     args = parser.parse_args()
 
-    data_path = './dataset'
-    log_path = osp.join('log', args.dataset, args.explainer, args.model_used)
-    log_file = log_path + '/Sparsity=' + str(args.sparsity) + '.log'
-    if not osp.exists(log_path):
-        os.makedirs(log_path)
+    # ── 路径设置 ──────────────────────────────────────────────────
+    data_path       = './dataset'
     checkpoint_path = './model/checkpoint'
-    model_save_path = osp.join(checkpoint_path, args.dataset, args.model_used + '.pkl')
+    model_save_path = osp.join(checkpoint_path, args.dataset,
+                               args.model_used +  f'_seed0.pkl')
+    log_path = osp.join('log', args.dataset, args.explainer, args.model_used)
+    os.makedirs(log_path, exist_ok=True)
+    log_file = osp.join(log_path, f'Sparsity={args.sparsity}.log')
+
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    fid, fid_inv = 0, 0
-    
+
     with open(log_file, 'a') as f:
-        print('model used:', args.model_used, file=f)
-        print('method used:', args.explainer, file=f)
-        
+        f.write(f'model used: {args.model_used}\n')
+        f.write(f'method used: {args.explainer}\n')
+
+    # ── 数据 & 模型 ────────────────────────────────────────────────
     data, num_nodes, dim_node, num_classes = load_dataset(data_path, args.dataset)
-    model = eval(args.model_used)(model_level='graph', dim_node=dim_node,
-                                        dim_hidden=args.dim_hidden, num_classes=num_classes).to(device)
-    model.load_state_dict(torch.load(model_save_path))
-    
+
+    model = eval(args.model_used)(
+        model_level='graph',
+        dim_node=dim_node,
+        dim_hidden=args.dim_hidden,
+        num_classes=num_classes,
+    ).to(device)
+
+    raw_state = torch.load(model_save_path, map_location=device)
+    model.load_state_dict(compatible_state_dict(raw_state))
+    model.eval()
+
+    # ── Explainer 初始化 ───────────────────────────────────────────
     if args.explainer == 'PGExplainer':
-        explainer = eval(args.explainer)(model, in_channels=600, device=device, explain_graph=True)
-        tmp_file = osp.join(checkpoint_path, args.dataset, args.model_used + 'PGExplainer.pt')
+        explainer = PGExplainer(model, in_channels=600,
+                                device=device, explain_graph=True)
+        tmp_file = osp.join(checkpoint_path, args.dataset,
+                            args.model_used + '_PGExplainer.pt')
         if not osp.exists(tmp_file):
             explainer.train_explanation_network(data['train'])
             torch.save(explainer.state_dict(), tmp_file)
-        state_dict = torch.load(tmp_file)
-        explainer.load_state_dict(state_dict)
+        explainer.load_state_dict(torch.load(tmp_file, map_location=device))
     else:
         explainer = eval(args.explainer)(model, explain_graph=True)
-    
+
+    # ── 评估循环 ───────────────────────────────────────────────────
     data_loader = DataLoader(data['test'], batch_size=1, shuffle=False)
-    for index, data in enumerate(data_loader):
-        if data.num_nodes == 1:
+    fid_sum, fid_inv_sum, valid_count = 0.0, 0.0, 0
+
+    for index, graph in enumerate(data_loader):
+        if graph.num_nodes <= 1:
             continue
-        print(f'explain graph #{index + 1:d}')
-        data.to(device)
-        prediction = model(data.x, data.edge_index)[0].argmax(-1).item()
-        masks = explainer(data.x, data.edge_index, sparsity=0, num_classes=num_classes, node_idx=0, max_nodes=int(data.num_nodes * (1 - args.sparsity)))
-                
-        log_file = log_path + '/Sparsity=' + str(args.sparsity) + '.log'
-        masks = convert_edge_mask(masks, data.num_nodes, data.edge_index, num_classes, args.sparsity, explain_graph=True)
-        masks = control_sparsity(masks, data.num_nodes, args.sparsity, num_classes, explain_graph=True)
-        print(masks[prediction])
-        result = eval_related_pred(model, data.x, data.edge_index, masks, data.num_nodes, num_classes)
-        print(result[prediction])
-        print(f"Fidelity = {result[prediction]['ori'] - result[prediction]['maskout']:.4f}\n", 
-            f"Fidelity_inv = {result[prediction]['ori'] - result[prediction]['mask']:.4f}\n",
-            f"Sparsity = {args.sparsity:.4f}")
+
+        graph = graph.to(device)
+        print(f'Explaining graph #{index + 1}  (nodes={graph.num_nodes})')
+
+        with torch.no_grad():
+            batch = torch.zeros(graph.num_nodes, dtype=torch.long, device=device)
+            pred_cls = model(graph.x, graph.edge_index, batch=batch)[0].argmax(-1).item()
+
+        # explainer 返回 edge-level importance mask
+        edge_masks = explainer(
+            graph.x, graph.edge_index,
+            sparsity=0,
+            num_classes=num_classes,
+            node_idx=0,
+            max_nodes=int(graph.num_nodes * (1 - args.sparsity)),
+        )
+
+        # edge mask → node-level binary mask（已按 sparsity 截断）
+        node_masks = get_node_mask_from_edge_mask(
+            edge_masks, graph.num_nodes, graph.edge_index,
+            num_classes, args.sparsity,
+        )
+
+        # 物理子图切割 + 推理（只针对 pred_cls，共 3 次前向传播）
+        r = eval_related_pred(
+            model, graph.x, graph.edge_index,
+            node_masks, pred_cls, device,
+        )
+
+        fid     = r['ori'] - r['masked_out']   # Fidelity+（越大越好）
+        fid_inv = r['ori'] - r['masked_in']    # Fidelity-（越小越好）
+
+        print(f"  Fidelity+  = {fid:.4f}")
+        print(f"  Fidelity-  = {fid_inv:.4f}")
+        print(f"  Sparsity   = {args.sparsity:.4f}\n")
+
         with open(log_file, 'a') as f:
-            print(f'explain graph #{index + 1:d}', end=' ', file=f)
-            print(f"({result[prediction]['ori'] - result[prediction]['maskout']:.4f}, "
-                f"{result[prediction]['ori'] - result[prediction]['mask']:.4f})\n", file=f)
-        fid += result[prediction]['ori'] - result[prediction]['maskout']
-        fid_inv += result[prediction]['ori'] - result[prediction]['mask']
-                
-    log_file = log_path + '/Sparsity=' + str(args.sparsity) + '.log'
+            f.write(f'graph #{index + 1:d}  '
+                    f'(fid+={fid:.4f}, fid-={fid_inv:.4f})\n')
+
+        fid_sum     += fid
+        fid_inv_sum += fid_inv
+        valid_count += 1
+
+    # ── 汇总结果 ───────────────────────────────────────────────────
+    if valid_count == 0:
+        print('No valid graphs to evaluate.')
+        return
+
+    avg_fid     = fid_sum     / valid_count
+    avg_fid_inv = fid_inv_sum / valid_count
+
+    summary = (
+        f'\n=== Final Results ({valid_count} graphs) ===\n'
+        f'  Fidelity+  = {avg_fid:.4f}  (higher is better)\n'
+        f'  Fidelity-  = {avg_fid_inv:.4f}  (lower is better)\n'
+        f'  Sparsity   = {args.sparsity:.4f}\n'
+    )
+    print(summary)
     with open(log_file, 'a') as f:
-        print(f"Final:\n Fidelity = {fid / len(data_loader):.4f}\n", 
-            f"Fidelity_inv = {fid_inv / len(data_loader):.4f}\n",
-            f"Sparsity = {args.sparsity:.4f}\n", file=f)
-        
+        f.write(summary)
 
 
 if __name__ == '__main__':
