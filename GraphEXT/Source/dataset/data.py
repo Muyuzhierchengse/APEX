@@ -7,13 +7,15 @@ import scipy.sparse as ssp
 import random
 
 
-def split_dataset(dataset, dataset_split=[0.8, 0.1, 0.1]):
+def split_dataset(dataset, dataset_split=[0.8, 0.1, 0.1], seed=0):
     dataset_len = len(dataset)
     dataset_split = [int(dataset_len * dataset_split[0]),
                      int(dataset_len * dataset_split[1]),
                      0]
     dataset_split[2] = dataset_len - dataset_split[0] - dataset_split[1]
-    train_set, val_set, test_set = random_split(dataset, dataset_split)
+    generator = torch.Generator().manual_seed(seed)
+    train_set, val_set, test_set = random_split(dataset, dataset_split, 
+                                                 generator=generator)
 
     return {'train': train_set, 'val': val_set, 'test': test_set}
 
@@ -39,6 +41,39 @@ def load_dataset(data_path, dataset):
         dataset = SynGraphDataset(data_path, dataset)
         dataset.data.x = dataset.data.x.to(torch.float32)
         dataset.data.y = dataset.data.y
+    # 新增 BACE 数据集支持（单任务二分类）
+    if dataset in ['BACE']:
+        dataset = MoleculeDataset(data_path, dataset)
+        dataset.data.x = dataset.data.x.to(torch.float32)
+        dataset.data.y = dataset.data.y[:, 0]  # BACE 只有1列标签
+
+        # 新增 Tox21 数据集支持
+    if dataset in ['Tox21']:
+        dataset = MoleculeDataset(data_path, dataset)
+        dataset.data.x = dataset.data.x.to(torch.float32)
+        y = dataset.data.y[:, 0]
+        y = torch.nan_to_num(y, nan=0.0)
+        y = torch.where(y == -1, torch.zeros_like(y), y)
+        y = y.clamp(0, 1)
+        dataset.data.y = y
+        # 过滤空图
+        dataset = dataset[[i for i, data in enumerate(dataset)
+                           if data.x is not None and data.x.size(0) > 0
+                           and data.edge_index is not None and data.edge_index.size(1) > 0]]
+
+    # 新增 ToxCast 数据集支持
+    if dataset in ['ToxCast']:
+        dataset = MoleculeDataset(data_path, dataset)
+        dataset.data.x = dataset.data.x.to(torch.float32)
+        y = dataset.data.y[:, 0]
+        y = torch.nan_to_num(y, nan=0.0)
+        y = torch.where(y == -1, torch.zeros_like(y), y)
+        y = y.clamp(0, 1)
+        dataset.data.y = y
+        # 过滤空图
+        dataset = dataset[[i for i, data in enumerate(dataset)
+                           if data.x is not None and data.x.size(0) > 0
+                           and data.edge_index is not None and data.edge_index.size(1) > 0]]
 
     dataset.data.y = dataset.data.y.long()
     dim_node = dataset.num_node_features
