@@ -28,7 +28,6 @@ from method.fsx import FSX
 from method.evaluation import get_node_mask_from_edge_mask, eval_related_pred
 from method.explainpoly import PolyGINExplainer
 
-
 def compatible_state_dict(state_dict):
     """修复新版 PyG 中 GCNConv weight 键名及形状变化。"""
     comp = OrderedDict()
@@ -37,7 +36,6 @@ def compatible_state_dict(state_dict):
                          r'conv\1.lin.weight', key)
         comp[new_key] = value.T if new_key != key else value
     return comp
-
 
 def set_seed(seed=0):
     random.seed(seed)
@@ -48,52 +46,16 @@ def set_seed(seed=0):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-
-# ── Efficiency Gap 计算 ────────────────────────────────────────────────────────
-def compute_efficiency_gap(model, x, edge_index, node_scores, pred_cls, device):
-    """
-    Efficiency Gap = | Σ φ_i  −  (f(x) − f(0)) |
-
-    其中：
-      φ_i        — 节点 i 对类别 pred_cls 的 Aumann-Shapley 归因值（有符号 sum）
-      f(x)       — 模型对原始输入的 logit（pre-softmax）
-      f(0)       — 模型对全零输入（baseline）的 logit
-      pred_cls   — 当前预测类别
-
-    对于精确多项式积分，理论上该值应趋于 0（仅剩浮点误差 ~1e-7）。
-    对于其他启发式方法，node_scores 来自 edge_mask 的启发式转换，
-    gap 值反映其归因"非守恒程度"，可与 PolyGINExplainer 形成对比。
-    """
-    num_nodes = x.size(0)
-    batch = torch.zeros(num_nodes, dtype=torch.long, device=device)
-
-    with torch.no_grad():
-        # f(x)：原始输入的 logit（注意：取 logit 而非 softmax，与归因定义一致）
-        logits_x    = model(x,                  edge_index, batch=batch)[0]
-        # f(0)：全零 baseline 的 logit
-        logits_zero = model(torch.zeros_like(x), edge_index, batch=batch)[0]
-
-    fx   = logits_x[pred_cls].item()
-    f0   = logits_zero[pred_cls].item()
-    delta_f = fx - f0                          # 函数值变化量（标量）
-
-    sum_phi = node_scores[pred_cls].sum().item()  # 所有节点归因之和（标量）
-
-    gap = abs(sum_phi - delta_f)
-    return gap, sum_phi, delta_f
-
-
 def main():
     set_seed(0)
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, default='BBBP',
-                        choices=['BBBP', 'ClinTox', 'Graph-SST2', 'Graph-Twitter',
-                                 'BA_2Motifs', 'BACE', 'Tox21', 'ToxCast'])
+                        choices=['BBBP', 'ClinTox', 'Graph-SST2', 'Graph-Twitter','BA_2Motifs','BACE','Tox21','ToxCast'])
     parser.add_argument('--model_used', type=str, default='GIN_3l',
-                        choices=['GCN_2l', 'GCN_3l', 'GIN_2l', 'GIN_3l', 'PolyGIN_3l'])
+                        choices=['GCN_2l', 'GCN_3l', 'GIN_2l', 'GIN_3l','PolyGIN_3l'])
     parser.add_argument('--explainer', type=str, default='GradCAM',
                         choices=['FlowX', 'GNNExplainer', 'GraphEXT',
-                                 'PGExplainer', 'GradCAM', 'FSX', 'PolyGINExplainer'])
+                                 'PGExplainer', 'GradCAM', 'FSX','PolyGINExplainer'])
     parser.add_argument('--sparsity', type=float, default=0.5)
     parser.add_argument('--dim_hidden', type=int, default=300)
     args = parser.parse_args()
@@ -102,7 +64,7 @@ def main():
     data_path       = './dataset'
     checkpoint_path = './model/checkpoint'
     model_save_path = osp.join(checkpoint_path, args.dataset,
-                               args.model_used + f'_seed0.pkl')
+                               args.model_used +  f'_seed0.pkl')
     log_path = osp.join('log', args.dataset, args.explainer, args.model_used)
     os.makedirs(log_path, exist_ok=True)
     log_file = osp.join(log_path, f'Sparsity={args.sparsity}.log')
@@ -142,7 +104,7 @@ def main():
 
     # ── 评估循环 ───────────────────────────────────────────────────
     data_loader = DataLoader(data['test'], batch_size=1, shuffle=False)
-    fid_sum, fid_inv_sum, gap_sum, valid_count = 0.0, 0.0, 0.0, 0
+    fid_sum, fid_inv_sum, valid_count = 0.0, 0.0, 0
 
     for index, graph in enumerate(data_loader):
         if graph.num_nodes <= 1:
@@ -155,11 +117,9 @@ def main():
             batch = torch.zeros(graph.num_nodes, dtype=torch.long, device=device)
             pred_cls = model(graph.x, graph.edge_index, batch=batch)[0].argmax(-1).item()
             if pred_cls != graph.y.item():
-                print(f'  Skipping: prediction incorrect '
-                      f'(pred={pred_cls}, true={graph.y.item()})\n')
+                print(f'  Skipping: prediction incorrect (pred={pred_cls}, true={graph.y.item()})\n')
                 continue
-
-        # ── explainer 返回 edge-level / node-level importance mask ──
+        # explainer 返回 edge-level importance mask
         result = explainer(
             graph.x, graph.edge_index,
             sparsity=0,
@@ -169,40 +129,18 @@ def main():
         )
 
         if isinstance(result, tuple):
-            # PolyGINExplainer：直接使用解析 node mask
-            edge_masks, node_masks = result
-            # last_node_scores 由 PolyGINExplainer 在 __call__ 中写入
-            raw_node_scores = explainer.last_node_scores  # List[Tensor], len=num_classes
+            # PolyGINExplainer：直接使用解析 node mask，跳过启发式边转换
+            _, node_masks = result
+            # node_masks 已经按 sparsity 二值化，无需再调用 get_node_mask_from_edge_mask
         else:
-            # 其他 explainer：edge_mask → node_mask 转换
+            # 其他 explainer：走原有 edge_mask → node_mask 转换
             edge_masks = result
             node_masks = get_node_mask_from_edge_mask(
                 edge_masks, graph.num_nodes, graph.edge_index,
                 num_classes, args.sparsity,
             )
-            # 用 edge_mask 的节点端点均值作为"伪归因分数"，供 gap 计算使用
-            # 注意：这对非 PolyGIN 方法无理论意义，仅用于对比展示
-            raw_node_scores = []
-            for cls in range(num_classes):
-                em = edge_masks[cls].detach()
-                ns = torch.zeros(graph.num_nodes, device=device)
-                src, dst = graph.edge_index[0], graph.edge_index[1]
-                ns.scatter_add_(0, src, em)
-                ns.scatter_add_(0, dst, em)
-                deg = torch.zeros(graph.num_nodes, device=device)
-                ones = torch.ones(graph.edge_index.size(1), device=device)
-                deg.scatter_add_(0, src, ones)
-                deg.scatter_add_(0, dst, ones)
-                ns = ns / (deg + 1e-8)
-                raw_node_scores.append(ns)
 
-        # ── Efficiency Gap ─────────────────────────────────────────
-        gap, sum_phi, delta_f = compute_efficiency_gap(
-            model, graph.x, graph.edge_index,
-            raw_node_scores, pred_cls, device,
-        )
-
-        # ── Fidelity ───────────────────────────────────────────────
+        # 物理子图切割 + 推理（只针对 pred_cls，共 3 次前向传播）
         r = eval_related_pred(
             model, graph.x, graph.edge_index,
             node_masks, pred_cls, device,
@@ -211,20 +149,16 @@ def main():
         fid     = r['ori'] - r['masked_out']   # Fidelity+（越大越好）
         fid_inv = r['ori'] - r['masked_in']    # Fidelity-（越小越好）
 
-        print(f"  Fidelity+        = {fid:.4f}")
-        print(f"  Fidelity-        = {fid_inv:.4f}")
-        print(f"  Efficiency Gap   = {gap:.6e}  "
-              f"(Σφ={sum_phi:.4f}, Δf={delta_f:.4f})")
-        print(f"  Sparsity         = {args.sparsity:.4f}\n")
+        print(f"  Fidelity+  = {fid:.4f}")
+        print(f"  Fidelity-  = {fid_inv:.4f}")
+        print(f"  Sparsity   = {args.sparsity:.4f}\n")
 
         with open(log_file, 'a') as f:
             f.write(f'graph #{index + 1:d}  '
-                    f'(fid+={fid:.4f}, fid-={fid_inv:.4f}, '
-                    f'gap={gap:.6e}, sum_phi={sum_phi:.4f}, delta_f={delta_f:.4f})\n')
+                    f'(fid+={fid:.4f}, fid-={fid_inv:.4f})\n')
 
         fid_sum     += fid
         fid_inv_sum += fid_inv
-        gap_sum     += gap
         valid_count += 1
 
     # ── 汇总结果 ───────────────────────────────────────────────────
@@ -234,14 +168,12 @@ def main():
 
     avg_fid     = fid_sum     / valid_count
     avg_fid_inv = fid_inv_sum / valid_count
-    avg_gap     = gap_sum     / valid_count
 
     summary = (
         f'\n=== Final Results ({valid_count} graphs) ===\n'
-        f'  Fidelity+        = {avg_fid:.4f}  (higher is better)\n'
-        f'  Fidelity-        = {avg_fid_inv:.4f}  (lower is better)\n'
-        f'  Efficiency Gap   = {avg_gap:.6e}  (lower is better) \n'
-        f'  Sparsity         = {args.sparsity:.4f}\n'
+        f'  Fidelity+  = {avg_fid:.4f}  (higher is better)\n'
+        f'  Fidelity-  = {avg_fid_inv:.4f}  (lower is better)\n'
+        f'  Sparsity   = {args.sparsity:.4f}\n'
     )
     print(summary)
     with open(log_file, 'a') as f:
