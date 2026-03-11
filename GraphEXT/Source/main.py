@@ -25,7 +25,11 @@ from method.gnnexplainer import GNNExplainer
 from method.gradcam import GradCAM
 from method.pgexplainer import PGExplainer
 from method.fsx import FSX
-from method.evaluation import get_node_mask_from_edge_mask, eval_related_pred
+from method.evaluation import (
+    get_node_mask_from_edge_mask,
+    eval_related_pred,
+    eval_stability,                    # ← 新增
+)
 from method.explainpoly import PolyGINExplainer
 
 
@@ -96,6 +100,11 @@ def main():
                                  'PGExplainer', 'GradCAM', 'FSX', 'PolyGINExplainer'])
     parser.add_argument('--sparsity', type=float, default=0.5)
     parser.add_argument('--dim_hidden', type=int, default=300)
+    # ── Stability 超参 ──────────────────────────────────────────────
+    parser.add_argument('--n_perturb',     type=int,   default=5,
+                        help='独立扰动次数（GNNXBench 默认 5）')
+    parser.add_argument('--perturb_ratio', type=float, default=0.1,
+                        help='不重要区域删 / 增边的比例（GNNXBench 默认 0.1）')
     args = parser.parse_args()
 
     # ── 路径设置 ──────────────────────────────────────────────────
@@ -142,7 +151,7 @@ def main():
 
     # ── 评估循环 ───────────────────────────────────────────────────
     data_loader = DataLoader(data['test'], batch_size=1, shuffle=False)
-    fid_sum, fid_inv_sum, gap_sum, valid_count = 0.0, 0.0, 0.0, 0
+    fid_sum, fid_inv_sum, gap_sum, stab_sum, valid_count = 0.0, 0.0, 0.0, 0.0, 0
 
     for index, graph in enumerate(data_loader):
         if graph.num_nodes <= 1:
@@ -211,20 +220,39 @@ def main():
         fid     = r['ori'] - r['masked_out']   # Fidelity+（越大越好）
         fid_inv = r['ori'] - r['masked_in']    # Fidelity-（越小越好）
 
+        # ── Stability（GNNXBench）─────────────────────────────────
+        stability = eval_stability(
+            explainer,
+            graph.x, graph.edge_index,
+            node_masks,
+            pred_cls,
+            num_classes,
+            graph.num_nodes,
+            args.sparsity,
+            device,
+            perturb_ratio=args.perturb_ratio,
+            n_perturb=args.n_perturb,
+            seed_base=100 + index * args.n_perturb,   # 每张图使用独立种子组
+        )
+
         print(f"  Fidelity+        = {fid:.4f}")
         print(f"  Fidelity-        = {fid_inv:.4f}")
         print(f"  Efficiency Gap   = {gap:.6e}  "
               f"(Σφ={sum_phi:.4f}, Δf={delta_f:.4f})")
+        print(f"  Stability        = {stability:.4f}  "
+              f"(Jaccard@{args.n_perturb}×perturb={args.perturb_ratio})")
         print(f"  Sparsity         = {args.sparsity:.4f}\n")
 
         with open(log_file, 'a') as f:
             f.write(f'graph #{index + 1:d}  '
                     f'(fid+={fid:.4f}, fid-={fid_inv:.4f}, '
-                    f'gap={gap:.6e}, sum_phi={sum_phi:.4f}, delta_f={delta_f:.4f})\n')
+                    f'gap={gap:.6e}, sum_phi={sum_phi:.4f}, delta_f={delta_f:.4f}, '
+                    f'stability={stability:.4f})\n')
 
         fid_sum     += fid
         fid_inv_sum += fid_inv
         gap_sum     += gap
+        stab_sum    += stability
         valid_count += 1
 
     # ── 汇总结果 ───────────────────────────────────────────────────
@@ -235,12 +263,14 @@ def main():
     avg_fid     = fid_sum     / valid_count
     avg_fid_inv = fid_inv_sum / valid_count
     avg_gap     = gap_sum     / valid_count
+    avg_stab    = stab_sum    / valid_count
 
     summary = (
         f'\n=== Final Results ({valid_count} graphs) ===\n'
         f'  Fidelity+        = {avg_fid:.4f}  (higher is better)\n'
         f'  Fidelity-        = {avg_fid_inv:.4f}  (lower is better)\n'
-        f'  Efficiency Gap   = {avg_gap:.6e}  (lower is better) \n'
+        f'  Efficiency Gap   = {avg_gap:.6e}  (lower is better)\n'
+        f'  Stability        = {avg_stab:.4f}  (higher is better)\n'
         f'  Sparsity         = {args.sparsity:.4f}\n'
     )
     print(summary)
