@@ -46,13 +46,14 @@ def count_parameters(model):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, default='Graph-Twitter', 
-                        choices=['BA_shapes', 'BA_LRP', 'BBBP', 'ClinTox', 'Graph-SST2', 'Graph-Twitter'])
-    parser.add_argument('--model_used', type=str, default='GCN_3l', 
-                        choices=['GCN_2l', 'GCN_3l', 'GIN_2l', 'GIN_3l',
-                                'PolyGNN_2l', 'PolyGNN_3l', 'PolyGIN_2l', 'PolyGIN_3l','QPolyGIN_3l'])
-    parser.add_argument('--epochs', type=int, default=100)
+                        choices=[ 'BBBP', 'ClinTox', 'Graph-SST2', 'Graph-Twitter',
+                                 'BA_2Motifs','BACE','Tox21','ToxCast','MUTAG', 
+                                 'Mutagenicity', 'BA_shapes','ogbg-molhiv','ogbg-molpcba','ogbn-proteins','ogbg-ppa'])
+    parser.add_argument('--model_used', type=str, default='GIN_3l', 
+                        choices=['GCN_2l', 'GCN_3l', 'GIN_2l', 'GIN_3l','PolyGIN_3l'])
+    parser.add_argument('--epochs', type=int, default=50)
     parser.add_argument('--dim_hidden', type=int, default=300)
-    parser.add_argument('--lr', type=float, default=5e-5)
+    parser.add_argument('--lr', type=float, default=1e-3)#5e-5
     args = parser.parse_args()
 
     data_path = './dataset'
@@ -92,7 +93,7 @@ def main():
             set_seed(seed)
             model_save_path = osp.join(checkpoint_path, args.model_used + f'_seed{seed}.pkl')
 
-            if args.dataset in ['BA_shapes']:
+            if args.dataset in ['BA_shapes','ogbn-proteins']:
                 model_level = 'node'
                 model = eval(args.model_used)(model_level=model_level, dim_node=dim_node,
                                         dim_hidden=args.dim_hidden, num_classes=num_classes).to(device)
@@ -138,11 +139,11 @@ def main():
                 print(param_info)
                 log_file.write(param_info)
                 
-                optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr, weight_decay=5e-4)
+                optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr, weight_decay=5e-6)#5e-4 6
 
-                train_loader = DataLoader(data['train'], batch_size=1, shuffle=True)
-                valid_loader = DataLoader(data['val'], batch_size=1, shuffle=True)
-                test_loader = DataLoader(data['test'], batch_size=1, shuffle=True)
+                train_loader = DataLoader(data['train'], batch_size=32, shuffle=True)#batch16、32，epoch1000.当梯度有点爆炸的时候换成1
+                valid_loader = DataLoader(data['val'], batch_size=32, shuffle=True)
+                test_loader = DataLoader(data['test'], batch_size=32, shuffle=True)
 
                 total_nodes = 0
                 for data_item in train_loader:

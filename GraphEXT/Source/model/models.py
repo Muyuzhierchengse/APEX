@@ -1,10 +1,3 @@
-"""
-FileName: models.py
-Description: GNN models' set
-Time: 2020/7/30 9:01
-Project: GNN_benchmark
-Author: Shurui Gui
-"""
 
 import torch
 import torch.nn as nn
@@ -17,404 +10,6 @@ from torch_geometric.typing import OptPairTensor, Adj, OptTensor, Size
 from torch import Tensor
 
 from torch_sparse import SparseTensor
-
-
-class GNNBasic(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def arguments_read(self, *args, **kwargs):
-
-        data: Batch = kwargs.get('data') or None
-
-        if not data:
-            if not args:
-                assert 'x' in kwargs
-                assert 'edge_index' in kwargs
-                x, edge_index = kwargs['x'], kwargs['edge_index'],
-                batch = kwargs.get('batch')
-                if batch is None:
-                    batch = torch.zeros(kwargs['x'].shape[0], dtype=torch.int64, device=x.device)
-            elif len(args) == 2:
-                x, edge_index = args[0], args[1]
-                batch = torch.zeros(args[0].shape[0], dtype=torch.int64, device=x.device)
-            elif len(args) == 3:
-                x, edge_index, batch = args[0], args[1], args[2]
-            else:
-                raise ValueError(f"forward's args should take 2 or 3 arguments but got {len(args)}")
-        else:
-            x, edge_index, batch = data.x, data.edge_index, data.batch
-
-        return x, edge_index, batch
-
-
-class GCN_3l(GNNBasic):
-
-    def __init__(self, model_level, dim_node, dim_hidden, num_classes):
-        super().__init__()
-        num_layer = 3
-
-        self.conv1 = GCNConv(dim_node, dim_hidden)
-        self.convs = nn.ModuleList(
-            [
-                GCNConv(dim_hidden, dim_hidden)
-                for _ in range(num_layer - 1)
-             ]
-        )
-        self.relu1 = nn.ReLU()
-        self.relus = nn.ModuleList(
-            [
-                nn.ReLU()
-                for _ in range(num_layer - 1)
-            ]
-        )
-        if model_level == 'node':
-            self.readout = IdenticalPool()
-        else:
-            self.readout = GlobalMeanPool()
-
-        self.ffn = nn.Sequential(*(
-                [nn.Linear(dim_hidden, dim_hidden)] +
-                [nn.ReLU(), nn.Dropout(), nn.Linear(dim_hidden, num_classes)]
-        ))
-
-        self.dropout = nn.Dropout()
-
-    def forward(self, *args, **kwargs) -> torch.Tensor:
-        """
-        :param Required[data]: Batch - input data
-        :return:
-        """
-        x, edge_index, batch = self.arguments_read(*args, **kwargs)
-
-        post_conv = self.relu1(self.conv1(x, edge_index))
-        for conv, relu in zip(self.convs, self.relus):
-            post_conv = relu(conv(post_conv, edge_index))
-
-        out_readout = self.readout(post_conv, batch)
-
-        out = self.ffn(out_readout)
-        return out
-
-    def get_emb(self, *args, **kwargs) -> torch.Tensor:
-        x, edge_index, batch = self.arguments_read(*args, **kwargs)
-        post_conv = self.relu1(self.conv1(x, edge_index))
-        for conv, relu in zip(self.convs, self.relus):
-            post_conv = relu(conv(post_conv, edge_index))
-        return post_conv
-
-class GCN_3l_BN(GCN_3l):
-    def __init__(self, model_level, dim_node, dim_hidden, num_classes):
-        super().__init__(model_level, dim_node, dim_hidden, num_classes)
-        num_layer = 3
-
-        self.relu1 = nn.Sequential(
-            nn.BatchNorm1d(dim_hidden),
-            nn.ReLU()
-        )
-
-        self.relus = nn.ModuleList(
-            [
-                nn.Sequential(
-                    nn.BatchNorm1d(dim_hidden),
-                    nn.ReLU(),
-                )
-                for _ in range(num_layer - 1)
-            ]
-        )
-
-class GCN_2l(GNNBasic):
-
-    def __init__(self, model_level, dim_node, dim_hidden, num_classes):
-        super().__init__()
-        num_layer = 2
-
-        self.conv1 = GCNConv(dim_node, dim_hidden)
-        self.convs = nn.ModuleList(
-            [
-                GCNConv(dim_hidden, dim_hidden)
-                for _ in range(num_layer - 1)
-            ]
-        )
-        self.relu1 = nn.ReLU()
-        self.relus = nn.ModuleList(
-            [
-                nn.ReLU()
-                for _ in range(num_layer - 1)
-            ]
-        )
-        if model_level == 'node':
-            self.readout = IdenticalPool()
-        else:
-            self.readout = GlobalMeanPool()
-
-        self.ffn = nn.Sequential(*(
-                [nn.Linear(dim_hidden, num_classes)]
-        ))
-
-        self.dropout = nn.Dropout()
-
-    def forward(self, *args, **kwargs) -> torch.Tensor:
-        """
-        :param Required[data]: Batch - input data
-        :return:
-        """
-        x, edge_index, batch = self.arguments_read(*args, **kwargs)
-
-        post_conv = self.relu1(self.conv1(x, edge_index))
-        for conv, relu in zip(self.convs, self.relus):
-            post_conv = relu(conv(post_conv, edge_index))
-
-        out_readout = self.readout(post_conv, batch)
-
-        out = self.ffn(out_readout)
-
-        return out
-
-    def get_emb(self, *args, **kwargs) -> torch.Tensor:
-        x, edge_index, batch = self.arguments_read(*args, **kwargs)
-        
-        post_conv = self.relu1(self.conv1(x, edge_index))
-        for conv, relu in zip(self.convs, self.relus):
-            post_conv = relu(conv(post_conv, edge_index))
-            
-        return post_conv
-
-
-class GIN_3l(GNNBasic):
-
-    def __init__(self, model_level, dim_node, dim_hidden, num_classes):
-        super().__init__()
-        num_layer = 3
-
-        self.conv1 = GINConv(nn.Sequential(nn.Linear(dim_node, dim_hidden), nn.ReLU(),
-                                           nn.Linear(dim_hidden, dim_hidden), nn.ReLU()))#,
-                                           # nn.BatchNorm1d(dim_hidden)))
-        self.convs = nn.ModuleList(
-            [
-                GINConv(nn.Sequential(nn.Linear(dim_hidden, dim_hidden), nn.ReLU(),
-                                      nn.Linear(dim_hidden, dim_hidden), nn.ReLU()))#,
-                                      # nn.BatchNorm1d(dim_hidden)))
-                for _ in range(num_layer - 1)
-             ]
-        )
-        self.relu1 = nn.ReLU()
-        self.relus = nn.ModuleList(
-            [
-                nn.ReLU()
-                for _ in range(num_layer - 1)
-            ]
-        )
-        if model_level == 'node':
-            self.readout = IdenticalPool()
-        else:
-            self.readout = GlobalMeanPool()
-
-        self.ffn = nn.Sequential(*(
-                [nn.Linear(dim_hidden, dim_hidden)] +
-                [nn.ReLU(), nn.Dropout(), nn.Linear(dim_hidden, num_classes)]
-        ))
-
-        self.dropout = nn.Dropout()
-
-    def forward(self, *args, **kwargs) -> torch.Tensor:
-        """
-        :param Required[data]: Batch - input data
-        :return:
-        """
-        x, edge_index, batch = self.arguments_read(*args, **kwargs)
-
-
-        post_conv = self.conv1(x, edge_index)
-        for conv in self.convs:
-            post_conv = conv(post_conv, edge_index)
-
-
-        out_readout = self.readout(post_conv, batch)
-
-        out = self.ffn(out_readout)
-        return out
-
-    def get_emb(self, *args, **kwargs) -> torch.Tensor:
-        x, edge_index, batch = self.arguments_read(*args, **kwargs)
-        post_conv = self.conv1(x, edge_index)
-        for conv in self.convs:
-            post_conv = conv(post_conv, edge_index)
-        return post_conv
-
-
-class GIN_2l(GNNBasic):
-
-    def __init__(self, model_level, dim_node, dim_hidden, num_classes):
-        super().__init__()
-        num_layer = 2
-
-        self.conv1 = GINConv(nn.Sequential(nn.Linear(dim_node, dim_hidden), nn.ReLU(),
-                                           nn.Linear(dim_hidden, dim_hidden), nn.ReLU()))#,
-                                           # nn.BatchNorm1d(dim_hidden)))
-        self.convs = nn.ModuleList(
-            [
-                GINConv(nn.Sequential(nn.Linear(dim_hidden, dim_hidden), nn.ReLU(),
-                                      nn.Linear(dim_hidden, dim_hidden), nn.ReLU()))#,
-                                      # nn.BatchNorm1d(dim_hidden)))
-                for _ in range(num_layer - 1)
-             ]
-        )
-        self.relu1 = nn.ReLU()
-        self.relus = nn.ModuleList(
-            [
-                nn.ReLU()
-                for _ in range(num_layer - 1)
-            ]
-        )
-        if model_level == 'node':
-            self.readout = IdenticalPool()
-        else:
-            self.readout = GlobalMeanPool()
-
-        self.ffn = nn.Sequential(*(
-                [nn.Linear(dim_hidden, dim_hidden)] +
-                [nn.ReLU(), nn.Dropout(), nn.Linear(dim_hidden, num_classes)]
-        ))
-
-        self.dropout = nn.Dropout()
-
-    def forward(self, *args, **kwargs) -> torch.Tensor:
-        """
-        :param Required[data]: Batch - input data
-        :return:
-        """
-        x, edge_index, batch = self.arguments_read(*args, **kwargs)
-
-
-        post_conv = self.conv1(x, edge_index)
-        for conv in self.convs:
-            post_conv = conv(post_conv, edge_index)
-
-
-        out_readout = self.readout(post_conv, batch)
-
-        out = self.ffn(out_readout)
-        return out
-
-    def get_emb(self, *args, **kwargs) -> torch.Tensor:
-        x, edge_index, batch = self.arguments_read(*args, **kwargs)
-        post_conv = self.conv1(x, edge_index)
-        for conv in self.convs:
-            post_conv = conv(post_conv, edge_index)
-        return post_conv
-
-
-class GCNConv(gnn.GCNConv):
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.__explain_flow__ = False
-        self.edge_weight = None
-        self.layer_edge_mask = None
-        self.weight = nn.Parameter(self.lin.weight.data.T.clone().detach())
-
-    def forward(self, x: Tensor, edge_index: Adj,
-                edge_weight: OptTensor = None) -> Tensor:
-        """"""
-
-        if self.normalize and edge_weight is None:
-            if isinstance(edge_index, Tensor):
-                cache = self._cached_edge_index
-                if cache is None:
-                    edge_index, edge_weight = gnn.conv.gcn_conv.gcn_norm(  # yapf: disable
-                        edge_index, edge_weight, x.size(self.node_dim),
-                        self.improved, self.add_self_loops, dtype=x.dtype)
-                    if self.cached:
-                        self._cached_edge_index = (edge_index, edge_weight)
-                else:
-                    edge_index, edge_weight = cache[0], cache[1]
-
-            elif isinstance(edge_index, SparseTensor):
-                cache = self._cached_adj_t
-                if cache is None:
-                    edge_index = gnn.conv.gcn_conv.gcn_norm(  # yapf: disable
-                        edge_index, edge_weight, x.size(self.node_dim),
-                        self.improved, self.add_self_loops, dtype=x.dtype)
-                    if self.cached:
-                        self._cached_adj_t = edge_index
-                else:
-                    edge_index = cache
-
-        # --- add require_grad ---
-        edge_weight.requires_grad_(True)
-
-        x = torch.matmul(x, self.weight)
-
-        # propagate_type: (x: Tensor, edge_weight: OptTensor)
-        out = self.propagate(edge_index, x=x, edge_weight=edge_weight,
-                             size=None)
-
-        if self.bias is not None:
-            out += self.bias
-
-        # --- My: record edge_weight ---
-        self.edge_weight = edge_weight
-
-        return out
-
-    def propagate(self, edge_index: Adj, size: Size = None, **kwargs):
-        size = self._check_input(edge_index, size)
-
-        # Run "fused" message and aggregation (if applicable).
-        if (isinstance(edge_index, SparseTensor) and self.fuse
-                and not self._explain):
-            coll_dict = self._collect(self._fused_user_args, edge_index,
-                                      size, kwargs)
-
-            # 对于 SparseTensor，直接调用 message_and_aggregate
-            out = self.message_and_aggregate(edge_index, **coll_dict)
-            return self.update(out, **coll_dict)
-
-        # Otherwise, run both functions in separation.
-        elif isinstance(edge_index, Tensor) or not self.fuse:
-            coll_dict = self._collect(self._user_args, edge_index, size,
-                                      kwargs)
-
-            # 过滤掉 message 方法不需要的参数
-            # PyG 内置的 GCNConv.message 方法通常需要 x_j 和 edge_weight
-            message_kwargs = {}
-            if 'x_j' in coll_dict:
-                message_kwargs['x_j'] = coll_dict['x_j']
-            if 'edge_weight' in coll_dict:
-                message_kwargs['edge_weight'] = coll_dict['edge_weight']
-            
-            out = self.message(**message_kwargs)
-            
-            # For `GNNExplainer`, we require a separate message and aggregate
-            # procedure since this allows us to inject the `edge_mask` into the
-            # message passing computation scheme.
-            if self._explain:
-                edge_mask = self.__edge_mask__
-                # Some ops add self-loops to `edge_index`. We need to do the
-                # same for `edge_mask` (but do not train those).
-                if out.size(self.node_dim) != edge_mask.size(0):
-                    loop = edge_mask.new_ones(size[0])
-                    edge_mask = torch.cat([edge_mask, loop], dim=0)
-                assert out.size(self.node_dim) == edge_mask.size(0)
-                out = out * edge_mask.view([-1] + [1] * (out.dim() - 1))
-            elif self.__explain_flow__:
-                edge_mask = self.layer_edge_mask
-                # Some ops add self-loops to `edge_index`. We need to do the
-                # same for `edge_mask` (but do not train those).
-                if out.size(self.node_dim) != edge_mask.size(0):
-                    loop = edge_mask.new_ones(size[0])
-                    edge_mask = torch.cat([edge_mask, loop], dim=0)
-                assert out.size(self.node_dim) == edge_mask.size(0)
-                out = out * edge_mask.view([-1] + [1] * (out.dim() - 1))
-
-            # 对于 aggregate 和 update，同样过滤参数
-            aggregate_kwargs = {k: v for k, v in coll_dict.items() 
-                               if k in ['index', 'ptr', 'dim_size']}
-            out = self.aggregate(out, **aggregate_kwargs)
-            
-            return self.update(out)
-
 
 class GINConv(gnn.GINConv):
 
@@ -510,14 +105,13 @@ class GINConv(gnn.GINConv):
                                       size, kwargs)
 
             out = self.message_and_aggregate(edge_index, **coll_dict)
-            return self.update(out)  # 只传递out，不传递其他参数
+            return self.update(out)  
 
         # Otherwise, run both functions in separation.
         elif isinstance(edge_index, Tensor) or not self.fuse:
             coll_dict = self._collect(self._user_args, edge_index, size,
                                       kwargs)
 
-            # 只传递 message 方法需要的参数
             msg_kwargs = {}
             if 'x_j' in coll_dict:
                 msg_kwargs['x_j'] = coll_dict['x_j']
@@ -526,13 +120,9 @@ class GINConv(gnn.GINConv):
             
             out = self.message(**msg_kwargs)
 
-            # For `GNNExplainer`, we require a separate message and aggregate
-            # procedure since this allows us to inject the `edge_mask` into the
-            # message passing computation scheme.
             if self._explain:
                 edge_mask = self.__edge_mask__
-                # Some ops add self-loops to `edge_index`. We need to do the
-                # same for `edge_mask` (but do not train those).
+          
                 if out.size(self.node_dim) != edge_mask.size(0):
                     loop = edge_mask.new_ones(size[0])
                     edge_mask = torch.cat([edge_mask, loop], dim=0)
@@ -540,21 +130,526 @@ class GINConv(gnn.GINConv):
                 out = out * edge_mask.view([-1] + [1] * (out.dim() - 1))
             elif self.__explain_flow__:
                 edge_mask = self.layer_edge_mask
-                # Some ops add self-loops to `edge_index`. We need to do the
-                # same for `edge_mask` (but do not train those).
+               
                 if out.size(self.node_dim) != edge_mask.size(0):
                     loop = edge_mask.new_ones(size[0])
                     edge_mask = torch.cat([edge_mask, loop], dim=0)
                 assert out.size(self.node_dim) == edge_mask.size(0)
                 out = out * edge_mask.view([-1] + [1] * (out.dim() - 1))
 
-            # 对于 aggregate，只传递需要的参数
             aggr_kwargs = {k: v for k, v in coll_dict.items() 
                           if k in ['index', 'ptr', 'dim_size']}
             out = self.aggregate(out, **aggr_kwargs)
 
-            # 关键修复：update 方法只接受 out 参数
             return self.update(out)
+class GNNBasic(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def arguments_read(self, *args, **kwargs):
+
+        data: Batch = kwargs.get('data') or None
+
+        if not data:
+            if not args:
+                assert 'x' in kwargs
+                assert 'edge_index' in kwargs
+                x, edge_index = kwargs['x'], kwargs['edge_index'],
+                batch = kwargs.get('batch')
+                if batch is None:
+                    batch = torch.zeros(kwargs['x'].shape[0], dtype=torch.int64, device=x.device)
+            elif len(args) == 2:
+                x, edge_index = args[0], args[1]
+                batch = torch.zeros(args[0].shape[0], dtype=torch.int64, device=x.device)
+            elif len(args) == 3:
+                x, edge_index, batch = args[0], args[1], args[2]
+            else:
+                raise ValueError(f"forward's args should take 2 or 3 arguments but got {len(args)}")
+        else:
+            x, edge_index, batch = data.x, data.edge_index, data.batch
+
+        return x, edge_index, batch
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 二阶多项式激活  f(x) = x + alpha * x^2
+# ──────────────────────────────────────────────────────────────────────────────
+class PolyActivation(nn.Module):
+    """
+    f(x) = x + alpha * x^2
+    保留线性残差项 x，保证梯度通路畅通（类似 ResNet skip）。
+    alpha 可学习，初始化为小值，训练中自动调节非线性强度。
+    """
+    def __init__(self, alpha: float = 0.05):
+        super().__init__()
+        self.alpha = nn.Parameter(torch.tensor(alpha))
+
+    def forward(self, x: Tensor) -> Tensor:
+        # clamp alpha 防止其绝对值过大导致 x^2 爆炸
+        alpha = self.alpha.clamp(-0.5, 0.5)
+        return x + alpha * x * x
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PolyScaleNorm：纯代数幅度控制，不破坏多项式性质
+# 只在特征幅度超过阈值时才缩放，避免过度压制梯度
+# ──────────────────────────────────────────────────────────────────────────────
+class PolyScaleNorm(nn.Module):
+    """
+    纯多项式幅度控制：x * scale（逐维可学习标量缩放）
+    等价于在线性层权重上乘一个对角矩阵，完全是代数操作。
+    scale 初始化为小值（0.3），防止初期 x^2 爆炸；
+    训练中自动调节，不引入任何分段或非多项式操作。
+    """
+    def __init__(self, dim: int, init_scale: float = 0.3):
+        super().__init__()
+        self.scale = nn.Parameter(torch.full((dim,), init_scale))
+
+    def forward(self, x: Tensor) -> Tensor:
+        return x * self.scale
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PolyMLP：严格单激活（每层阶数恰好 ×2）
+# 结构：Linear -> PolyScaleNorm -> PolyAct -> Linear
+# 线性层使用普通 init（不用谱归一化），靠 PolyScaleNorm 控制幅度
+# ──────────────────────────────────────────────────────────────────────────────
+def _poly_mlp(in_f: int, out_f: int) -> nn.Sequential:
+    """
+    单 PolyAct：每次调用阶数 ×2。
+    L=3 层后整体阶数 = 2^3 = 8，高斯节点数 m = 4。
+    """
+    lin1 = nn.Linear(in_f, out_f)
+    lin2 = nn.Linear(out_f, out_f)
+    nn.init.xavier_uniform_(lin1.weight, gain=1.0)
+    nn.init.zeros_(lin1.bias)
+    nn.init.xavier_uniform_(lin2.weight, gain=1.0)
+    nn.init.zeros_(lin2.bias)
+    return nn.Sequential(
+        lin1,
+        PolyScaleNorm(out_f),   # 幅度软限制，放在激活之前
+        PolyActivation(),       # 唯一的非线性，阶数 ×2
+        lin2,                   # 第二线性，不加激活，保持阶数不再升
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PolyGINConv
+# ──────────────────────────────────────────────────────────────────────────────
+class PolyGINConv(GINConv):
+    def __init__(self, in_f: int, out_f: int,
+                 eps: float = 0., train_eps: bool = False, **kwargs):
+        super().__init__(
+            nn=_poly_mlp(in_f, out_f),
+            eps=eps,
+            train_eps=train_eps,
+            **kwargs
+        )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PolyGIN_3l
+# ──────────────────────────────────────────────────────────────────────────────
+class PolyGIN_3l(GNNBasic):
+    """
+    Pure-polynomial GIN, 3 layers (L=3).
+    ┌─────────────────────────────────────────────────────┐
+    │  激活：PolyActivation  f(x)=x+α·x²，无 ReLU        │
+    │  归一化：PolyScaleNorm（软幅度限制），无 BN/LN      │
+    │  整体阶数：2^4 = 16；归因高斯节点数：m = 5          │
+    └─────────────────────────────────────────────────────┘
+    """
+
+    def __init__(self, model_level: str, dim_node: int,
+                 dim_hidden: int, num_classes: int):
+        super().__init__()
+        num_layer = 3  # L = 3
+
+        self.conv1 = PolyGINConv(dim_node, dim_hidden)
+        self.convs = nn.ModuleList([
+            PolyGINConv(dim_hidden, dim_hidden)
+            for _ in range(num_layer - 1)
+        ])
+
+        if model_level == 'node':
+            self.readout = IdenticalPool()
+        else:
+            self.readout = GlobalMeanPool()
+
+        # FFN 分类头：Linear -> PolyAct -> Dropout -> Linear
+        # 不加额外 PolyScaleNorm，让分类头梯度更自由
+        ffn_lin1 = nn.Linear(dim_hidden, dim_hidden)
+        ffn_lin2 = nn.Linear(dim_hidden, num_classes)
+        nn.init.xavier_uniform_(ffn_lin1.weight, gain=1.0)
+        nn.init.zeros_(ffn_lin1.bias)
+        nn.init.xavier_uniform_(ffn_lin2.weight, gain=0.5)
+        nn.init.zeros_(ffn_lin2.bias)
+
+        self.ffn = nn.Sequential(
+            ffn_lin1,
+            PolyActivation(),
+            nn.Dropout(p=0.5),
+            ffn_lin2,
+        )
+
+    def forward(self, *args, **kwargs) -> Tensor:
+        x, edge_index, batch = self.arguments_read(*args, **kwargs)
+        post_conv = self.conv1(x, edge_index)
+        for conv in self.convs:
+            post_conv = conv(post_conv, edge_index)
+        out_readout = self.readout(post_conv, batch)
+        return self.ffn(out_readout)
+
+    def get_emb(self, *args, **kwargs) -> Tensor:
+        x, edge_index, batch = self.arguments_read(*args, **kwargs)
+        post_conv = self.conv1(x, edge_index)
+        for conv in self.convs:
+            post_conv = conv(post_conv, edge_index)
+        return post_conv
+    
+class GCN_3l(GNNBasic):
+
+    def __init__(self, model_level, dim_node, dim_hidden, num_classes):
+        super().__init__()
+        num_layer = 3
+
+        self.conv1 = GCNConv(dim_node, dim_hidden)
+        self.convs = nn.ModuleList(
+            [
+                GCNConv(dim_hidden, dim_hidden)
+                for _ in range(num_layer - 1)
+             ]
+        )
+        self.relu1 = nn.ReLU()
+        self.relus = nn.ModuleList(
+            [
+                nn.ReLU()
+                for _ in range(num_layer - 1)
+            ]
+        )
+        if model_level == 'node':
+            self.readout = IdenticalPool()
+        else:
+            self.readout = GlobalMeanPool()
+
+        self.ffn = nn.Sequential(*(
+                [nn.Linear(dim_hidden, dim_hidden)] +
+                [nn.ReLU(), nn.Dropout(), nn.Linear(dim_hidden, num_classes)]
+        ))
+
+        self.dropout = nn.Dropout()
+
+    def forward(self, *args, **kwargs) -> torch.Tensor:
+
+        x, edge_index, batch = self.arguments_read(*args, **kwargs)
+
+        post_conv = self.relu1(self.conv1(x, edge_index))
+        for conv, relu in zip(self.convs, self.relus):
+            post_conv = relu(conv(post_conv, edge_index))
+
+        out_readout = self.readout(post_conv, batch)
+
+        out = self.ffn(out_readout)
+        return out
+
+    def get_emb(self, *args, **kwargs) -> torch.Tensor:
+        x, edge_index, batch = self.arguments_read(*args, **kwargs)
+        post_conv = self.relu1(self.conv1(x, edge_index))
+        for conv, relu in zip(self.convs, self.relus):
+            post_conv = relu(conv(post_conv, edge_index))
+        return post_conv
+
+class GCN_3l_BN(GCN_3l):
+    def __init__(self, model_level, dim_node, dim_hidden, num_classes):
+        super().__init__(model_level, dim_node, dim_hidden, num_classes)
+        num_layer = 3
+
+        self.relu1 = nn.Sequential(
+            nn.BatchNorm1d(dim_hidden),
+            nn.ReLU()
+        )
+
+        self.relus = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.BatchNorm1d(dim_hidden),
+                    nn.ReLU(),
+                )
+                for _ in range(num_layer - 1)
+            ]
+        )
+
+class GCN_2l(GNNBasic):
+
+    def __init__(self, model_level, dim_node, dim_hidden, num_classes):
+        super().__init__()
+        num_layer = 2
+
+        self.conv1 = GCNConv(dim_node, dim_hidden)
+        self.convs = nn.ModuleList(
+            [
+                GCNConv(dim_hidden, dim_hidden)
+                for _ in range(num_layer - 1)
+            ]
+        )
+        self.relu1 = nn.ReLU()
+        self.relus = nn.ModuleList(
+            [
+                nn.ReLU()
+                for _ in range(num_layer - 1)
+            ]
+        )
+        if model_level == 'node':
+            self.readout = IdenticalPool()
+        else:
+            self.readout = GlobalMeanPool()
+
+        self.ffn = nn.Sequential(*(
+                [nn.Linear(dim_hidden, num_classes)]
+        ))
+
+        self.dropout = nn.Dropout()
+
+    def forward(self, *args, **kwargs) -> torch.Tensor:
+
+        x, edge_index, batch = self.arguments_read(*args, **kwargs)
+
+        post_conv = self.relu1(self.conv1(x, edge_index))
+        for conv, relu in zip(self.convs, self.relus):
+            post_conv = relu(conv(post_conv, edge_index))
+
+        out_readout = self.readout(post_conv, batch)
+
+        out = self.ffn(out_readout)
+
+        return out
+
+    def get_emb(self, *args, **kwargs) -> torch.Tensor:
+        x, edge_index, batch = self.arguments_read(*args, **kwargs)
+        
+        post_conv = self.relu1(self.conv1(x, edge_index))
+        for conv, relu in zip(self.convs, self.relus):
+            post_conv = relu(conv(post_conv, edge_index))
+            
+        return post_conv
+
+
+class GIN_3l(GNNBasic):
+
+    def __init__(self, model_level, dim_node, dim_hidden, num_classes):
+        super().__init__()
+        num_layer = 3
+
+        self.conv1 = GINConv(nn.Sequential(nn.Linear(dim_node, dim_hidden), nn.ReLU(),
+                                           nn.Linear(dim_hidden, dim_hidden), nn.ReLU()))#,
+                                           # nn.BatchNorm1d(dim_hidden)))
+        self.convs = nn.ModuleList(
+            [
+                GINConv(nn.Sequential(nn.Linear(dim_hidden, dim_hidden), nn.ReLU(),
+                                      nn.Linear(dim_hidden, dim_hidden), nn.ReLU()))#,
+                                      # nn.BatchNorm1d(dim_hidden)))
+                for _ in range(num_layer - 1)
+             ]
+        )
+        self.relu1 = nn.ReLU()
+        self.relus = nn.ModuleList(
+            [
+                nn.ReLU()
+                for _ in range(num_layer - 1)
+            ]
+        )
+        if model_level == 'node':
+            self.readout = IdenticalPool()
+        else:
+            self.readout = GlobalMeanPool()
+
+        self.ffn = nn.Sequential(*(
+                [nn.Linear(dim_hidden, dim_hidden)] +
+                [nn.ReLU(), nn.Dropout(), nn.Linear(dim_hidden, num_classes)]
+        ))
+
+        self.dropout = nn.Dropout()
+
+    def forward(self, *args, **kwargs) -> torch.Tensor:
+
+        x, edge_index, batch = self.arguments_read(*args, **kwargs)
+
+
+        post_conv = self.conv1(x, edge_index)
+        for conv in self.convs:
+            post_conv = conv(post_conv, edge_index)
+
+
+        out_readout = self.readout(post_conv, batch)
+
+        out = self.ffn(out_readout)
+        return out
+
+    def get_emb(self, *args, **kwargs) -> torch.Tensor:
+        x, edge_index, batch = self.arguments_read(*args, **kwargs)
+        post_conv = self.conv1(x, edge_index)
+        for conv in self.convs:
+            post_conv = conv(post_conv, edge_index)
+        return post_conv
+
+
+class GIN_2l(GNNBasic):
+
+    def __init__(self, model_level, dim_node, dim_hidden, num_classes):
+        super().__init__()
+        num_layer = 2
+
+        self.conv1 = GINConv(nn.Sequential(nn.Linear(dim_node, dim_hidden), nn.ReLU(),
+                                           nn.Linear(dim_hidden, dim_hidden), nn.ReLU()))#,
+                                           # nn.BatchNorm1d(dim_hidden)))
+        self.convs = nn.ModuleList(
+            [
+                GINConv(nn.Sequential(nn.Linear(dim_hidden, dim_hidden), nn.ReLU(),
+                                      nn.Linear(dim_hidden, dim_hidden), nn.ReLU()))#,
+                                      # nn.BatchNorm1d(dim_hidden)))
+                for _ in range(num_layer - 1)
+             ]
+        )
+        self.relu1 = nn.ReLU()
+        self.relus = nn.ModuleList(
+            [
+                nn.ReLU()
+                for _ in range(num_layer - 1)
+            ]
+        )
+        if model_level == 'node':
+            self.readout = IdenticalPool()
+        else:
+            self.readout = GlobalMeanPool()
+
+        self.ffn = nn.Sequential(*(
+                [nn.Linear(dim_hidden, dim_hidden)] +
+                [nn.ReLU(), nn.Dropout(), nn.Linear(dim_hidden, num_classes)]
+        ))
+
+        self.dropout = nn.Dropout()
+
+    def forward(self, *args, **kwargs) -> torch.Tensor:
+
+        x, edge_index, batch = self.arguments_read(*args, **kwargs)
+
+
+        post_conv = self.conv1(x, edge_index)
+        for conv in self.convs:
+            post_conv = conv(post_conv, edge_index)
+
+
+        out_readout = self.readout(post_conv, batch)
+
+        out = self.ffn(out_readout)
+        return out
+
+    def get_emb(self, *args, **kwargs) -> torch.Tensor:
+        x, edge_index, batch = self.arguments_read(*args, **kwargs)
+        post_conv = self.conv1(x, edge_index)
+        for conv in self.convs:
+            post_conv = conv(post_conv, edge_index)
+        return post_conv
+
+
+class GCNConv(gnn.GCNConv):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.__explain_flow__ = False
+        self.edge_weight = None
+        self.layer_edge_mask = None
+        self.weight = nn.Parameter(self.lin.weight.data.T.clone().detach())
+
+    def forward(self, x: Tensor, edge_index: Adj,
+                edge_weight: OptTensor = None) -> Tensor:
+        """"""
+
+        if self.normalize and edge_weight is None:
+            if isinstance(edge_index, Tensor):
+                cache = self._cached_edge_index
+                if cache is None:
+                    edge_index, edge_weight = gnn.conv.gcn_conv.gcn_norm(  # yapf: disable
+                        edge_index, edge_weight, x.size(self.node_dim),
+                        self.improved, self.add_self_loops, dtype=x.dtype)
+                    if self.cached:
+                        self._cached_edge_index = (edge_index, edge_weight)
+                else:
+                    edge_index, edge_weight = cache[0], cache[1]
+
+            elif isinstance(edge_index, SparseTensor):
+                cache = self._cached_adj_t
+                if cache is None:
+                    edge_index = gnn.conv.gcn_conv.gcn_norm(  # yapf: disable
+                        edge_index, edge_weight, x.size(self.node_dim),
+                        self.improved, self.add_self_loops, dtype=x.dtype)
+                    if self.cached:
+                        self._cached_adj_t = edge_index
+                else:
+                    edge_index = cache
+
+        edge_weight.requires_grad_(True)
+
+        x = torch.matmul(x, self.weight)
+
+        out = self.propagate(edge_index, x=x, edge_weight=edge_weight,
+                             size=None)
+
+        if self.bias is not None:
+            out += self.bias
+
+        self.edge_weight = edge_weight
+
+        return out
+
+    def propagate(self, edge_index: Adj, size: Size = None, **kwargs):
+        size = self._check_input(edge_index, size)
+
+        if (isinstance(edge_index, SparseTensor) and self.fuse
+                and not self._explain):
+            coll_dict = self._collect(self._fused_user_args, edge_index,
+                                      size, kwargs)
+
+            out = self.message_and_aggregate(edge_index, **coll_dict)
+            return self.update(out, **coll_dict)
+
+        elif isinstance(edge_index, Tensor) or not self.fuse:
+            coll_dict = self._collect(self._user_args, edge_index, size,
+                                      kwargs)
+
+            message_kwargs = {}
+            if 'x_j' in coll_dict:
+                message_kwargs['x_j'] = coll_dict['x_j']
+            if 'edge_weight' in coll_dict:
+                message_kwargs['edge_weight'] = coll_dict['edge_weight']
+            
+            out = self.message(**message_kwargs)
+            
+           
+            if self._explain:
+                edge_mask = self.__edge_mask__
+     
+                if out.size(self.node_dim) != edge_mask.size(0):
+                    loop = edge_mask.new_ones(size[0])
+                    edge_mask = torch.cat([edge_mask, loop], dim=0)
+                assert out.size(self.node_dim) == edge_mask.size(0)
+                out = out * edge_mask.view([-1] + [1] * (out.dim() - 1))
+            elif self.__explain_flow__:
+                edge_mask = self.layer_edge_mask
+    
+                if out.size(self.node_dim) != edge_mask.size(0):
+                    loop = edge_mask.new_ones(size[0])
+                    edge_mask = torch.cat([edge_mask, loop], dim=0)
+                assert out.size(self.node_dim) == edge_mask.size(0)
+                out = out * edge_mask.view([-1] + [1] * (out.dim() - 1))
+
+            aggregate_kwargs = {k: v for k, v in coll_dict.items() 
+                               if k in ['index', 'ptr', 'dim_size']}
+            out = self.aggregate(out, **aggregate_kwargs)
+            
+            return self.update(out)
+
+
+
 
 
 class GNNPool(nn.Module):
@@ -594,7 +689,6 @@ class GraphSequential(nn.Sequential):
         return input
 
 
-# explain_mask in propagation haven't pass sigmoid func
 class GCN_2l_mask(GNNBasic):
 
     def __init__(self, model_level, dim_node, dim_hidden, num_classes):
@@ -627,10 +721,7 @@ class GCN_2l_mask(GNNBasic):
         self.dropout = nn.Dropout()
 
     def forward(self, *args, **kwargs) -> torch.Tensor:
-        """
-        :param Required[data]: Batch - input data
-        :return:
-        """
+   
         x, edge_index, batch = self.arguments_read(*args, **kwargs)
 
         post_conv = self.relu1(self.conv1(x, edge_index))
@@ -688,10 +779,7 @@ class GIN_2l_mask(GNNBasic):
         self.dropout = nn.Dropout()
 
     def forward(self, *args, **kwargs) -> torch.Tensor:
-        """
-        :param Required[data]: Batch - input data
-        :return:
-        """
+  
         x, edge_index, batch = self.arguments_read(*args, **kwargs)
 
 
@@ -761,7 +849,6 @@ class GCNConv_mask(gnn.GCNConv):
         if self.bias is not None:
             out += self.bias
 
-        # --- My: record edge_weight ---
         self.edge_weight = edge_weight
 
         return out
@@ -769,7 +856,6 @@ class GCNConv_mask(gnn.GCNConv):
     def propagate(self, edge_index: Adj, size: Size = None, **kwargs):
         size = self._check_input(edge_index, size)
 
-        # Run "fused" message and aggregation (if applicable).
         if (isinstance(edge_index, SparseTensor) and self.fuse
                 and not self._explain):
             coll_dict = self._collect(self._fused_user_args, edge_index,
@@ -781,7 +867,6 @@ class GCNConv_mask(gnn.GCNConv):
             update_kwargs = coll_dict
             return self.update(out, **update_kwargs)
 
-        # Otherwise, run both functions in separation.
         elif isinstance(edge_index, Tensor) or not self.fuse:
             coll_dict = self._collect(self._user_args, edge_index, size,
                                          kwargs)
@@ -789,13 +874,9 @@ class GCNConv_mask(gnn.GCNConv):
             msg_kwargs = coll_dict
             out = self.message(**msg_kwargs)
 
-            # For `GNNExplainer`, we require a separate message and aggregate
-            # procedure since this allows us to inject the `edge_mask` into the
-            # message passing computation scheme.
             if self._explain:
                 edge_mask = self.__edge_mask__
-                # Some ops add self-loops to `edge_index`. We need to do the
-                # same for `edge_mask` (but do not train those).
+             
                 if out.size(self.node_dim) != edge_mask.size(0):
                     loop = edge_mask.new_ones(size[0])
                     edge_mask = torch.cat([edge_mask, loop], dim=0)
@@ -803,8 +884,7 @@ class GCNConv_mask(gnn.GCNConv):
                 out = out * edge_mask.view([-1] + [1] * (out.dim() - 1))
             elif self.__explain_flow__:
                 edge_mask = self.layer_edge_mask
-                # Some ops add self-loops to `edge_index`. We need to do the
-                # same for `edge_mask` (but do not train those).
+       
                 if out.size(self.node_dim) != edge_mask.size(0):
                     loop = edge_mask.new_ones(size[0])
                     edge_mask = torch.cat([edge_mask, loop], dim=0)
@@ -905,21 +985,18 @@ class GINConv_mask(gnn.GINConv):
     def propagate(self, edge_index: Adj, size: Size = None, **kwargs):
         size = self._check_input(edge_index, size)
 
-        # Run "fused" message and aggregation (if applicable).
         if (isinstance(edge_index, SparseTensor) and self.fuse
                 and not self._explain):
             coll_dict = self._collect(self._fused_user_args, edge_index,
                                       size, kwargs)
 
             out = self.message_and_aggregate(edge_index, **coll_dict)
-            return self.update(out)  # 只传递out，不传递其他参数
+            return self.update(out)  
 
-        # Otherwise, run both functions in separation.
         elif isinstance(edge_index, Tensor) or not self.fuse:
             coll_dict = self._collect(self._user_args, edge_index, size,
                                       kwargs)
 
-            # 只传递 message 方法需要的参数
             msg_kwargs = {}
             if 'x_j' in coll_dict:
                 msg_kwargs['x_j'] = coll_dict['x_j']
@@ -928,13 +1005,9 @@ class GINConv_mask(gnn.GINConv):
             
             out = self.message(**msg_kwargs)
 
-            # For `GNNExplainer`, we require a separate message and aggregate
-            # procedure since this allows us to inject the `edge_mask` into the
-            # message passing computation scheme.
             if self._explain:
                 edge_mask = self.__edge_mask__
-                # Some ops add self-loops to `edge_index`. We need to do the
-                # same for `edge_mask` (but do not train those).
+              
                 if out.size(self.node_dim) != edge_mask.size(0):
                     loop = edge_mask.new_ones(size[0])
                     edge_mask = torch.cat([edge_mask, loop], dim=0)
@@ -942,680 +1015,16 @@ class GINConv_mask(gnn.GINConv):
                 out = out * edge_mask.view([-1] + [1] * (out.dim() - 1))
             elif self.__explain_flow__:
                 edge_mask = self.layer_edge_mask
-                # Some ops add self-loops to `edge_index`. We need to do the
-                # same for `edge_mask` (but do not train those).
+         
                 if out.size(self.node_dim) != edge_mask.size(0):
                     loop = edge_mask.new_ones(size[0])
                     edge_mask = torch.cat([edge_mask, loop], dim=0)
                 assert out.size(self.node_dim) == edge_mask.size(0)
                 out = out * edge_mask.view([-1] + [1] * (out.dim() - 1))
 
-            # 对于 aggregate，只传递需要的参数
             aggr_kwargs = {k: v for k, v in coll_dict.items() 
                           if k in ['index', 'ptr', 'dim_size']}
             out = self.aggregate(out, **aggr_kwargs)
 
-            # 关键修复：update 方法只接受 out 参数
             return self.update(out)
         
-
-class PolyGNN_3l(GNNBasic):
-    """
-    Polynomial Graph Neural Network with 3 layers.
-    Replaces non-linear activations with learnable polynomial transformations.
-    """
-    
-    def __init__(self, model_level, dim_node, dim_hidden, num_classes, poly_degree=3):
-        super().__init__()
-        num_layer = 3
-        
-        # GCN convolution layers
-        self.conv1 = GCNConv(dim_node, dim_hidden)
-        self.convs = nn.ModuleList(
-            [
-                GCNConv(dim_hidden, dim_hidden)
-                for _ in range(num_layer - 1)
-            ]
-        )
-        
-        # Layer normalization before polynomial activation
-        self.norm1 = nn.LayerNorm(dim_hidden)
-        self.norms = nn.ModuleList(
-            [
-                nn.LayerNorm(dim_hidden)
-                for _ in range(num_layer - 1)
-            ]
-        )
-        
-        # Polynomial activation layers
-        self.poly1 = PolyActivation(dim_hidden, degree=poly_degree)
-        self.polys = nn.ModuleList(
-            [
-                PolyActivation(dim_hidden, degree=poly_degree)
-                for _ in range(num_layer - 1)
-            ]
-        )
-        
-        # Dropout
-        self.dropout = nn.Dropout()
-        
-        # Readout layer
-        if model_level == 'node':
-            self.readout = IdenticalPool()
-        else:
-            self.readout = GlobalMeanPool()
-        
-        # Final feed-forward network
-        self.ffn = nn.Sequential(
-            nn.Linear(dim_hidden, dim_hidden),
-            nn.LayerNorm(dim_hidden),
-            PolyActivation(dim_hidden, degree=poly_degree),
-            self.dropout,
-            nn.Linear(dim_hidden, num_classes)
-        )
-        
-        # Store polynomial degree for attribution
-        self.poly_degree = poly_degree
-    
-    def forward(self, *args, **kwargs) -> torch.Tensor:
-        """
-        Forward pass of PolyGNN.
-        """
-        x, edge_index, batch = self.arguments_read(*args, **kwargs)
-        
-        # Layer 1: Conv -> Norm -> Poly Activation
-        z1 = self.conv1(x, edge_index)
-        z1_norm = self.norm1(z1)
-        h1 = self.poly1(z1_norm)
-        h1 = self.dropout(h1)
-        
-        # Subsequent layers
-        h = h1
-        for conv, norm, poly in zip(self.convs, self.norms, self.polys):
-            z = conv(h, edge_index)
-            z_norm = norm(z)
-            h = poly(z_norm)
-            h = self.dropout(h)
-        
-        # Readout and final classification
-        out_readout = self.readout(h, batch)
-        out = self.ffn(out_readout)
-        
-        return out
-    
-    def get_emb(self, *args, **kwargs) -> torch.Tensor:
-        """
-        Get node embeddings (before the final classifier).
-        """
-        x, edge_index, batch = self.arguments_read(*args, **kwargs)
-        
-        # Layer 1
-        z1 = self.conv1(x, edge_index)
-        z1_norm = self.norm1(z1)
-        h1 = self.poly1(z1_norm)
-        
-        # Subsequent layers
-        h = h1
-        for conv, norm, poly in zip(self.convs, self.norms, self.polys):
-            z = conv(h, edge_index)
-            z_norm = norm(z)
-            h = poly(z_norm)
-        
-        return h
-    
-    def get_polynomial_coefficients(self):
-        """
-        Get polynomial coefficients for interpretability.
-        Returns a list of coefficient tensors for each layer.
-        """
-        coeffs = []
-        coeffs.append(self.poly1.get_coefficients())
-        for poly in self.polys:
-            coeffs.append(poly.get_coefficients())
-        return coeffs
-
-
-class PolyGNN_2l(GNNBasic):
-    """
-    Polynomial Graph Neural Network with 2 layers.
-    """
-    
-    def __init__(self, model_level, dim_node, dim_hidden, num_classes, poly_degree=3):
-        super().__init__()
-        num_layer = 2
-        
-        # GCN convolution layers
-        self.conv1 = GCNConv(dim_node, dim_hidden)
-        self.convs = nn.ModuleList(
-            [
-                GCNConv(dim_hidden, dim_hidden)
-                for _ in range(num_layer - 1)
-            ]
-        )
-        
-        # Layer normalization before polynomial activation
-        self.norm1 = nn.LayerNorm(dim_hidden)
-        self.norms = nn.ModuleList(
-            [
-                nn.LayerNorm(dim_hidden)
-                for _ in range(num_layer - 1)
-            ]
-        )
-        
-        # Polynomial activation layers
-        self.poly1 = PolyActivation(dim_hidden, degree=poly_degree)
-        self.polys = nn.ModuleList(
-            [
-                PolyActivation(dim_hidden, degree=poly_degree)
-                for _ in range(num_layer - 1)
-            ]
-        )
-        
-        # Dropout
-        self.dropout = nn.Dropout()
-        
-        # Readout layer
-        if model_level == 'node':
-            self.readout = IdenticalPool()
-        else:
-            self.readout = GlobalMeanPool()
-        
-        # Final feed-forward network (simpler for 2-layer version)
-        self.ffn = nn.Sequential(*(
-            [nn.Linear(dim_hidden, num_classes)]
-        ))
-        
-        # Store polynomial degree for attribution
-        self.poly_degree = poly_degree
-    
-    def forward(self, *args, **kwargs) -> torch.Tensor:
-        """
-        Forward pass of PolyGNN.
-        """
-        x, edge_index, batch = self.arguments_read(*args, **kwargs)
-        
-        # Layer 1: Conv -> Norm -> Poly Activation
-        z1 = self.conv1(x, edge_index)
-        z1_norm = self.norm1(z1)
-        h1 = self.poly1(z1_norm)
-        h1 = self.dropout(h1)
-        
-        # Subsequent layers
-        h = h1
-        for conv, norm, poly in zip(self.convs, self.norms, self.polys):
-            z = conv(h, edge_index)
-            z_norm = norm(z)
-            h = poly(z_norm)
-            h = self.dropout(h)
-        
-        # Readout and final classification
-        out_readout = self.readout(h, batch)
-        out = self.ffn(out_readout)
-        
-        return out
-    
-    def get_emb(self, *args, **kwargs) -> torch.Tensor:
-        """
-        Get node embeddings (before the final classifier).
-        """
-        x, edge_index, batch = self.arguments_read(*args, **kwargs)
-        
-        # Layer 1
-        z1 = self.conv1(x, edge_index)
-        z1_norm = self.norm1(z1)
-        h1 = self.poly1(z1_norm)
-        
-        # Subsequent layers
-        h = h1
-        for conv, norm, poly in zip(self.convs, self.norms, self.polys):
-            z = conv(h, edge_index)
-            z_norm = norm(z)
-            h = poly(z_norm)
-        
-        return h
-    
-    def get_polynomial_coefficients(self):
-        """
-        Get polynomial coefficients for interpretability.
-        """
-        coeffs = []
-        coeffs.append(self.poly1.get_coefficients())
-        for poly in self.polys:
-            coeffs.append(poly.get_coefficients())
-        return coeffs
-
-
-class PolyActivation(nn.Module):
-    """
-    Learnable polynomial activation function.
-    P(x) = a_1 * x + a_2 * x^2 + ... + a_k * x^k
-    """
-    
-    def __init__(self, dim, degree=3):
-        super().__init__()
-        self.dim = dim
-        self.degree = degree
-        
-        # Learnable polynomial coefficients (scalars shared across all features)
-        self.coeffs = nn.Parameter(torch.zeros(degree))
-        
-        # Initialize coefficients to approximate ReLU near zero
-        # For ReLU: f(x)=max(0,x) ≈ x for x>0, 0 for x<=0
-        # We initialize with a_1=1, others small random values
-        with torch.no_grad():
-            self.coeffs[0] = 1.0  # Linear term approximates identity
-            # Initialize higher-order terms with small random values
-            self.coeffs[1:] = torch.randn(degree - 1) * 0.01
-        
-        # Epsilon for numerical stability
-        self.eps = 1e-8
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Apply polynomial transformation element-wise.
-        x: tensor of shape [batch_size, dim] or [num_nodes, dim]
-        """
-        # Apply polynomial: sum_{k=1}^{degree} a_k * x^k
-        result = torch.zeros_like(x)
-        for k in range(1, self.degree + 1):
-            # Element-wise power
-            x_pow = x.pow(k)
-            # Multiply by coefficient (scalar)
-            result = result + self.coeffs[k-1] * x_pow
-        
-        return result
-    
-    def get_coefficients(self) -> torch.Tensor:
-        """
-        Get the polynomial coefficients.
-        """
-        return self.coeffs.clone()
-    
-    def extra_repr(self) -> str:
-        return f'dim={self.dim}, degree={self.degree}'
-
-
-# ============================================================================
-# PolyGNN with GIN convolution
-# ============================================================================
-
-'''
-class PolyGIN_3l(GNNBasic):
-
-    def __init__(self, model_level, dim_node, dim_hidden, num_classes, poly_degree=3):
-        super().__init__()
-        num_layer = 3
-        
-        # GIN convolution layers with simple MLPs
-        self.conv1 = GINConv(
-            nn.Sequential(
-                nn.Linear(dim_node, dim_hidden),
-                nn.LayerNorm(dim_hidden),
-                PolyActivation(dim_hidden, degree=poly_degree),
-                nn.Linear(dim_hidden, dim_hidden),
-            )
-        )
-        
-        self.convs = nn.ModuleList(
-            [
-                GINConv(
-                    nn.Sequential(
-                        nn.Linear(dim_hidden, dim_hidden),
-                        nn.LayerNorm(dim_hidden),
-                        PolyActivation(dim_hidden, degree=poly_degree),
-                        nn.Linear(dim_hidden, dim_hidden),
-                    )
-                )
-                for _ in range(num_layer - 1)
-            ]
-        )
-
-        self.dropout = nn.Dropout()
-
-        if model_level == 'node':
-            self.readout = IdenticalPool()
-        else:
-            self.readout = GlobalMeanPool()
-        
-        self.ffn = nn.Sequential(
-            nn.Linear(dim_hidden, dim_hidden),
-            nn.LayerNorm(dim_hidden),
-            PolyActivation(dim_hidden, degree=poly_degree),
-            self.dropout,
-            nn.Linear(dim_hidden, num_classes)
-        )
-        
-        self.poly_degree = poly_degree
-    
-    def forward(self, *args, **kwargs) -> torch.Tensor:
-        x, edge_index, batch = self.arguments_read(*args, **kwargs)
-        
-        # First layer
-        h1 = self.conv1(x, edge_index)
-        h1 = self.dropout(h1)
-        
-        h = h1
-        for conv in self.convs:
-            h = conv(h, edge_index)
-            h = self.dropout(h)
-        
-        out_readout = self.readout(h, batch)
-        out = self.ffn(out_readout)
-        
-        return out
-    
-    def get_emb(self, *args, **kwargs) -> torch.Tensor:
-        x, edge_index, batch = self.arguments_read(*args, **kwargs)
-        
-        h = self.conv1(x, edge_index)
-        for conv in self.convs:
-            h = conv(h, edge_index)
-        
-        return h
-'''
-
-class PolyGIN_3l(GNNBasic):
-    
-    def __init__(self, model_level, dim_node, dim_hidden, num_classes, poly_degree=3):
-        super().__init__()
-        num_layer = 3
-        
-       
-        self.conv1 = GINConv(
-            nn.Sequential(
-                nn.Linear(dim_node, dim_hidden),
-                PolyActivation(dim_hidden, degree=poly_degree),
-                nn.Linear(dim_hidden, dim_hidden),
-                PolyActivation(dim_hidden, degree=poly_degree)
-            )
-        )
-        
-        self.convs = nn.ModuleList(
-            [
-                GINConv(
-                    nn.Sequential(
-                        nn.Linear(dim_hidden, dim_hidden),
-                        PolyActivation(dim_hidden, degree=poly_degree),
-                        nn.Linear(dim_hidden, dim_hidden),
-                        PolyActivation(dim_hidden, degree=poly_degree)
-                    )
-                )
-                for _ in range(num_layer - 1)
-            ]
-        )
-        
-        self.norms = nn.ModuleList(
-            [nn.LayerNorm(dim_hidden) for _ in range(num_layer)]
-        )
-        
-        self.dropout = nn.Dropout(0.5)  
-        
-        if model_level == 'node':
-            self.readout = IdenticalPool()
-        else:
-            self.readout = GlobalMeanPool()
-        
-        # 简化FFN
-        self.ffn = nn.Sequential(
-            nn.Linear(dim_hidden, dim_hidden),
-            PolyActivation(dim_hidden, degree=poly_degree),
-            nn.Dropout(0.5),
-            nn.Linear(dim_hidden, num_classes)
-        )
-        
-        self.poly_degree = poly_degree
-    
-    def forward(self, *args, **kwargs) -> torch.Tensor:
-        x, edge_index, batch = self.arguments_read(*args, **kwargs)
-        
-        h = self.conv1(x, edge_index)
-        h = self.norms[0](h) 
-        h = self.dropout(h)
-        
-        for i, conv in enumerate(self.convs):
-            h = conv(h, edge_index)
-            h = self.norms[i+1](h)  
-            h = self.dropout(h)
-        
-        out_readout = self.readout(h, batch)
-        out = self.ffn(out_readout)
-        
-        return out
-    
-    def get_emb(self, *args, **kwargs) -> torch.Tensor:
-        x, edge_index, batch = self.arguments_read(*args, **kwargs)
-        
-        h = self.conv1(x, edge_index)
-        h = self.norms[0](h)
-        for i, conv in enumerate(self.convs):
-            h = conv(h, edge_index)
-            h = self.norms[i+1](h)
-        
-        return h
-
-
-class PolyGIN_2l(GNNBasic):
-    """
-    PolyGNN with GIN convolution layers (2-layer version).
-    """
-    
-    def __init__(self, model_level, dim_node, dim_hidden, num_classes, poly_degree=3):
-        super().__init__()
-        num_layer = 2
-        
-        # GIN convolution layers
-        self.conv1 = GINConv(
-            nn.Sequential(
-                nn.Linear(dim_node, dim_hidden),
-                nn.LayerNorm(dim_hidden),
-                PolyActivation(dim_hidden, degree=poly_degree),
-                nn.Linear(dim_hidden, dim_hidden),
-            )
-        )
-        
-        self.convs = nn.ModuleList(
-            [
-                GINConv(
-                    nn.Sequential(
-                        nn.Linear(dim_hidden, dim_hidden),
-                        nn.LayerNorm(dim_hidden),
-                        PolyActivation(dim_hidden, degree=poly_degree),
-                        nn.Linear(dim_hidden, dim_hidden),
-                    )
-                )
-                for _ in range(num_layer - 1)
-            ]
-        )
-        
-        # Dropout
-        self.dropout = nn.Dropout()
-        
-        # Readout layer
-        if model_level == 'node':
-            self.readout = IdenticalPool()
-        else:
-            self.readout = GlobalMeanPool()
-        
-        # Final feed-forward network
-        self.ffn = nn.Sequential(*(
-            [nn.Linear(dim_hidden, num_classes)]
-        ))
-        
-        # Store polynomial degree
-        self.poly_degree = poly_degree
-    
-    def forward(self, *args, **kwargs) -> torch.Tensor:
-        x, edge_index, batch = self.arguments_read(*args, **kwargs)
-        
-        # First layer
-        h1 = self.conv1(x, edge_index)
-        h1 = self.dropout(h1)
-        
-        # Subsequent layers
-        h = h1
-        for conv in self.convs:
-            h = conv(h, edge_index)
-            h = self.dropout(h)
-        
-        # Readout and classification
-        out_readout = self.readout(h, batch)
-        out = self.ffn(out_readout)
-        
-        return out
-    
-    def get_emb(self, *args, **kwargs) -> torch.Tensor:
-        x, edge_index, batch = self.arguments_read(*args, **kwargs)
-        
-        h = self.conv1(x, edge_index)
-        for conv in self.convs:
-            h = conv(h, edge_index)
-        
-        return h
-
-
-
-from torch_geometric.nn import GINConv
-
-class QPolyGIN_3l(GNNBasic):
-    
-    def __init__(self, model_level, dim_node, dim_hidden, num_classes, poly_degree=3):
-        super().__init__()
-        num_layer = 3
-        
-        self.conv1 = GINConv(
-            nn.Sequential(
-                nn.Linear(dim_node, dim_hidden),
-                QinPolyActivation(dim_hidden, degree=poly_degree),
-                nn.Linear(dim_hidden, dim_hidden),
-                QinPolyActivation(dim_hidden, degree=poly_degree)
-            )
-        )
-        
-        self.convs = nn.ModuleList(
-            [
-                GINConv(
-                    nn.Sequential(
-                        nn.Linear(dim_hidden, dim_hidden),
-                        QinPolyActivation(dim_hidden, degree=poly_degree),
-                        nn.Linear(dim_hidden, dim_hidden),
-                        QinPolyActivation(dim_hidden, degree=poly_degree)
-                    )
-                )
-                for _ in range(num_layer - 1)
-            ]
-        )
-        
-        self.norms = nn.ModuleList(
-            [nn.LayerNorm(dim_hidden) for _ in range(num_layer)]
-        )
-        
-        self.dropout = nn.Dropout(0.5)  
-        
-        if model_level == 'node':
-            self.readout = IdenticalPool()
-        else:
-            self.readout = GlobalMeanPool()
-        
-        self.ffn = nn.Sequential(
-            nn.Linear(dim_hidden, dim_hidden),
-            QinPolyActivation(dim_hidden, degree=poly_degree),
-            nn.Dropout(0.5),
-            nn.Linear(dim_hidden, num_classes)
-        )
-        
-        self.poly_degree = poly_degree
-    
-    def forward(self, *args, **kwargs) -> torch.Tensor:
-        x, edge_index, batch = self.arguments_read(*args, **kwargs)
-        
-        h = self.conv1(x, edge_index)
-        h = self.norms[0](h) 
-        h = self.dropout(h)
-        
-        for i, conv in enumerate(self.convs):
-            h = conv(h, edge_index)
-            h = self.norms[i+1](h)  
-            h = self.dropout(h)
-        
-        out_readout = self.readout(h, batch)
-        out = self.ffn(out_readout)
-        
-        return out
-    
-    def get_emb(self, *args, **kwargs) -> torch.Tensor:
-        x, edge_index, batch = self.arguments_read(*args, **kwargs)
-        
-        h = self.conv1(x, edge_index)
-        h = self.norms[0](h)
-        for i, conv in enumerate(self.convs):
-            h = conv(h, edge_index)
-            h = self.norms[i+1](h)
-        
-        return h
-
-
-class QinPolyActivation(nn.Module):
-    """
-    Learnable polynomial activation function using Horner's method (Qin Jiushao algorithm).
-    P(x) = a_1 * x + a_2 * x^2 + ... + a_k * x^k
-    
-    Using Horner's method:
-    P(x) = x * (a_1 + x * (a_2 + x * (a_3 + ... + x * a_k)))
-    
-    This reduces the number of multiplications from O(k^2) to O(k).
-    """
-    
-    def __init__(self, dim, degree=3):
-        super().__init__()
-        self.dim = dim
-        self.degree = degree
-        
-        # Learnable polynomial coefficients (scalars shared across all features)
-        # Stored in reverse order for Horner's method: [a_k, a_{k-1}, ..., a_2, a_1]
-        self.coeffs = nn.Parameter(torch.zeros(degree))
-        
-        # Initialize coefficients to approximate ReLU near zero
-        with torch.no_grad():
-            self.coeffs[-1] = 1.0  # a_1 (linear term) at the end
-            # Initialize higher-order terms with small random values
-            self.coeffs[:-1] = torch.randn(degree - 1) * 0.01
-        
-        # Epsilon for numerical stability
-        self.eps = 1e-8
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Apply polynomial transformation using Horner's method (秦九韶算法).
-        x: tensor of shape [batch_size, dim] or [num_nodes, dim]
-        
-        For a polynomial P(x) = a_1*x + a_2*x^2 + a_3*x^3:
-        Horner's form: P(x) = x * (a_1 + x * (a_2 + x * a_3))
-        
-        Algorithm:
-        1. result = a_k (highest degree coefficient)
-        2. result = result * x + a_{k-1}
-        3. result = result * x + a_{k-2}
-        4. ...
-        5. result = result * x (final multiplication)
-        """
-        # Start with the highest degree coefficient
-        result = self.coeffs[0]
-        
-        # Apply Horner's method: repeatedly multiply by x and add next coefficient
-        for i in range(1, self.degree):
-            result = result * x + self.coeffs[i]
-        
-        # Final multiplication by x (since we want a_1*x + a_2*x^2 + ... + a_k*x^k)
-        result = result * x
-        
-        return result
-    
-    def get_coefficients(self) -> torch.Tensor:
-        """
-        Get the polynomial coefficients in standard order [a_1, a_2, ..., a_k].
-        """
-        # Reverse the coefficients to get standard order
-        return self.coeffs.flip(0).clone()
-    
-    def extra_repr(self) -> str:
-        return f'dim={self.dim}, degree={self.degree}, method=Horner'

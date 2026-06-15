@@ -2,13 +2,13 @@ import torch
 import numpy as np
 import random
 
+
 class GraphEXT(torch.nn.Module):
     def __init__(self, model, explain_graph=False):
         super().__init__()
         self.model = model
         self.explain_graph = explain_graph
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    
 
     def random_generate_partition(self, n):
         if self.explain_graph:
@@ -17,7 +17,7 @@ class GraphEXT(torch.nn.Module):
                 pos = random.randint(0, n - 1)
                 permutation[i], permutation[pos] = permutation[pos], permutation[i]
         else:
-            permutation = [i for i in range(1, n)]  #N=V/{0}
+            permutation = [i for i in range(1, n)]
             for i in range(n - 1):
                 pos = random.randint(0, n - 2)
                 permutation[i], permutation[pos] = permutation[pos], permutation[i]
@@ -55,7 +55,6 @@ class GraphEXT(torch.nn.Module):
                 partition.append(coal)
 
         return partition, belong
-
 
     def calc_partition_value(self, belong, S, model, num_nodes, edge_index, x, num_classes):
         def extract_edge_from_partition(R, ori_edge):
@@ -113,7 +112,6 @@ class GraphEXT(torch.nn.Module):
             return component_list
 
         components = extract_component_from_coalition(num_nodes, S, edge_index.tolist())
-        # components -> S|G
         value = torch.zeros(num_classes).to(self.device)
         if not self.explain_graph:
             for R in components:
@@ -123,13 +121,8 @@ class GraphEXT(torch.nn.Module):
             for R in components:
                 flag, edges = extract_edge_from_partition(R, edge_index.tolist())
                 value = value + model(x[R], edges)[0]
-            # batch[R] = index + 1
-            # value = model(x, edge_index, batch)[1:].sum(dim=0)
-            # value /= len(components)
-            # value = torch.softmax(value, dim=0)
 
         return torch.softmax(value / len(components), dim=0)
-
 
     def sv_str(self, model, num_nodes, edge_index, x, num_classes, T=100):
         sv_node = torch.zeros(num_nodes, num_classes).to(self.device)
@@ -161,10 +154,23 @@ class GraphEXT(torch.nn.Module):
                     sv_node[u] += now - las
                     las = now
 
-            return np.array(sv_node.t().cpu())
+        return sv_node
 
     def forward(self, x, edge_index, **kwargs):
-        node_idx = kwargs.get('node_idx')
         num_classes = kwargs.get('num_classes')
-        
-        return self.sv_str(self.model, x.shape[0], edge_index, x, num_classes)
+        num_nodes = x.shape[0]
+        num_edges = edge_index.shape[1]
+
+        sv_node = self.sv_str(self.model, num_nodes, edge_index, x, num_classes)
+
+        self.last_node_scores = [sv_node[:, cls].detach() for cls in range(num_classes)]
+
+        edge_masks = []
+        for cls in range(num_classes):
+            scores = sv_node[:, cls].detach()
+            src = edge_index[0]
+            dst = edge_index[1]
+            edge_score = scores[src] + scores[dst]
+            edge_masks.append(edge_score)
+
+        return edge_masks

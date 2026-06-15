@@ -2,6 +2,7 @@ import argparse
 import os
 import os.path as osp
 import re
+import time                            # ← 新增
 import functools
 from collections import OrderedDict
 import numpy as np
@@ -25,17 +26,25 @@ from method.gnnexplainer import GNNExplainer
 from method.gradcam import GradCAM
 from method.pgexplainer import PGExplainer
 from method.fsx import FSX
-from method.evaluation import get_node_mask_from_edge_mask, eval_related_pred
+from method.evaluation import (
+    get_node_mask_from_edge_mask,
+    eval_related_pred,
+    eval_stability,
+)
 from method.explainpoly import PolyGINExplainer
+from method.ig import IntegratedGradients
+from method.glig import GaussLegendreIG
+from method.roig import RiemannOptIG
+
 
 def compatible_state_dict(state_dict):
-    """修复新版 PyG 中 GCNConv weight 键名及形状变化。"""
     comp = OrderedDict()
     for key, value in state_dict.items():
         new_key = re.sub(r'conv(1|s\.[0-9]+)\.weight',
                          r'conv\1.lin.weight', key)
         comp[new_key] = value.T if new_key != key else value
     return comp
+
 
 def set_seed(seed=0):
     random.seed(seed)
@@ -46,25 +55,46 @@ def set_seed(seed=0):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+
+def compute_efficiency_gap(model, x, edge_index, node_scores, pred_cls, device):
+    num_nodes = x.size(0)
+    batch = torch.zeros(num_nodes, dtype=torch.long, device=device)
+
+    with torch.no_grad():
+        logits_x    = model(x,                   edge_index, batch=batch)[0]
+        logits_zero = model(torch.zeros_like(x), edge_index, batch=batch)[0]
+
+    fx      = logits_x[pred_cls].item()
+    f0      = logits_zero[pred_cls].item()
+    delta_f = fx - f0
+
+    sum_phi = node_scores[pred_cls].sum().item()
+    gap     = abs(sum_phi - delta_f)
+    return gap, sum_phi, delta_f
+
+
 def main():
     set_seed(0)
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, default='BBBP',
-                        choices=['BBBP', 'ClinTox', 'Graph-SST2', 'Graph-Twitter','BA_2Motifs','BACE','Tox21','ToxCast'])
+                        choices=['BBBP', 'ClinTox', 'Graph-SST2', 'Graph-Twitter',
+                                 'BA_2Motifs', 'BACE', 'Tox21', 'ToxCast'])
     parser.add_argument('--model_used', type=str, default='GIN_3l',
-                        choices=['GCN_2l', 'GCN_3l', 'GIN_2l', 'GIN_3l','PolyGIN_3l'])
+                        choices=['GCN_2l', 'GCN_3l', 'GIN_2l', 'GIN_3l', 'PolyGIN_3l'])
     parser.add_argument('--explainer', type=str, default='GradCAM',
                         choices=['FlowX', 'GNNExplainer', 'GraphEXT',
-                                 'PGExplainer', 'GradCAM', 'FSX','PolyGINExplainer'])
+                                 'PGExplainer', 'GradCAM', 'FSX', 'PolyGINExplainer',
+                                 'IntegratedGradients', 'GaussLegendreIG', 'RiemannOptIG'])
     parser.add_argument('--sparsity', type=float, default=0.5)
     parser.add_argument('--dim_hidden', type=int, default=300)
+    parser.add_argument('--n_perturb',     type=int,   default=5)
+    parser.add_argument('--perturb_ratio', type=float, default=0.1)
     args = parser.parse_args()
 
-    # ── 路径设置 ──────────────────────────────────────────────────
     data_path       = './dataset'
     checkpoint_path = './model/checkpoint'
     model_save_path = osp.join(checkpoint_path, args.dataset,
-                               args.model_used +  f'_seed0.pkl')
+                               args.model_used + f'_seed0.pkl')
     log_path = osp.join('log', args.dataset, args.explainer, args.model_used)
     os.makedirs(log_path, exist_ok=True)
     log_file = osp.join(log_path, f'Sparsity={args.sparsity}.log')
@@ -75,7 +105,6 @@ def main():
         f.write(f'model used: {args.model_used}\n')
         f.write(f'method used: {args.explainer}\n')
 
-    # ── 数据 & 模型 ────────────────────────────────────────────────
     data, num_nodes, dim_node, num_classes = load_dataset(data_path, args.dataset)
 
     model = eval(args.model_used)(
@@ -89,7 +118,6 @@ def main():
     model.load_state_dict(compatible_state_dict(raw_state))
     model.eval()
 
-    # ── Explainer 初始化 ───────────────────────────────────────────
     if args.explainer == 'PGExplainer':
         explainer = PGExplainer(model, in_channels=600,
                                 device=device, explain_graph=True)
@@ -99,12 +127,18 @@ def main():
             explainer.train_explanation_network(data['train'])
             torch.save(explainer.state_dict(), tmp_file)
         explainer.load_state_dict(torch.load(tmp_file, map_location=device))
+    elif args.explainer == 'IntegratedGradients':
+        explainer = IntegratedGradients(model, explain_graph=True, m_steps=50)
+    elif args.explainer == 'GaussLegendreIG':
+        explainer = GaussLegendreIG(model, explain_graph=True, n_steps=50)
+    elif args.explainer in ('RiemannOptIG',):
+        explainer = eval(args.explainer)(model, explain_graph=True, m_steps=50)
     else:
         explainer = eval(args.explainer)(model, explain_graph=True)
 
-    # ── 评估循环 ───────────────────────────────────────────────────
     data_loader = DataLoader(data['test'], batch_size=1, shuffle=False)
-    fid_sum, fid_inv_sum, valid_count = 0.0, 0.0, 0
+    fid_sum, fid_inv_sum, gap_sum, stab_sum, time_sum = 0.0, 0.0, 0.0, 0.0, 0.0
+    valid_count = 0
 
     for index, graph in enumerate(data_loader):
         if graph.num_nodes <= 1:
@@ -117,9 +151,13 @@ def main():
             batch = torch.zeros(graph.num_nodes, dtype=torch.long, device=device)
             pred_cls = model(graph.x, graph.edge_index, batch=batch)[0].argmax(-1).item()
             if pred_cls != graph.y.item():
-                print(f'  Skipping: prediction incorrect (pred={pred_cls}, true={graph.y.item()})\n')
+                print(f'  Skipping: prediction incorrect '
+                      f'(pred={pred_cls}, true={graph.y.item()})\n')
                 continue
-        # explainer 返回 edge-level importance mask
+
+        # ── 计时开始 ───────────────────────────────────────────────
+        t_start = time.perf_counter()
+
         result = explainer(
             graph.x, graph.edge_index,
             sparsity=0,
@@ -129,51 +167,98 @@ def main():
         )
 
         if isinstance(result, tuple):
-            # PolyGINExplainer：直接使用解析 node mask，跳过启发式边转换
-            _, node_masks = result
-            # node_masks 已经按 sparsity 二值化，无需再调用 get_node_mask_from_edge_mask
+            edge_masks, node_masks = result
+            raw_node_scores = explainer.last_node_scores
         else:
-            # 其他 explainer：走原有 edge_mask → node_mask 转换
             edge_masks = result
             node_masks = get_node_mask_from_edge_mask(
                 edge_masks, graph.num_nodes, graph.edge_index,
                 num_classes, args.sparsity,
             )
+            raw_node_scores = []
+            for cls in range(num_classes):
+                em  = edge_masks[cls].detach()
+                ns  = torch.zeros(graph.num_nodes, device=device)
+                src, dst = graph.edge_index[0], graph.edge_index[1]
+                ns.scatter_add_(0, src, em)
+                ns.scatter_add_(0, dst, em)
+                deg  = torch.zeros(graph.num_nodes, device=device)
+                ones = torch.ones(graph.edge_index.size(1), device=device)
+                deg.scatter_add_(0, src, ones)
+                deg.scatter_add_(0, dst, ones)
+                ns = ns / (deg + 1e-8)
+                raw_node_scores.append(ns)
 
-        # 物理子图切割 + 推理（只针对 pred_cls，共 3 次前向传播）
+        gap, sum_phi, delta_f = compute_efficiency_gap(
+            model, graph.x, graph.edge_index,
+            raw_node_scores, pred_cls, device,
+        )
+
         r = eval_related_pred(
             model, graph.x, graph.edge_index,
             node_masks, pred_cls, device,
         )
 
-        fid     = r['ori'] - r['masked_out']   # Fidelity+（越大越好）
-        fid_inv = r['ori'] - r['masked_in']    # Fidelity-（越小越好）
+        fid     = r['ori'] - r['masked_out']
+        fid_inv = r['ori'] - r['masked_in']
 
-        print(f"  Fidelity+  = {fid:.4f}")
-        print(f"  Fidelity-  = {fid_inv:.4f}")
-        print(f"  Sparsity   = {args.sparsity:.4f}\n")
+        stability = eval_stability(
+            explainer,
+            graph.x, graph.edge_index,
+            node_masks,
+            pred_cls,
+            num_classes,
+            graph.num_nodes,
+            args.sparsity,
+            device,
+            perturb_ratio=args.perturb_ratio,
+            n_perturb=args.n_perturb,
+            seed_base=100 + index * args.n_perturb,
+        )
+
+        # ── 计时结束 ───────────────────────────────────────────────
+        t_elapsed = time.perf_counter() - t_start
+
+        print(f"  Fidelity+        = {fid:.4f}")
+        print(f"  Fidelity-        = {fid_inv:.4f}")
+        print(f"  Efficiency Gap   = {gap:.6e}  "
+              f"(Σφ={sum_phi:.4f}, Δf={delta_f:.4f})")
+        print(f"  Stability        = {stability:.4f}  "
+              f"(Jaccard@{args.n_perturb}×perturb={args.perturb_ratio})")
+        print(f"  Sparsity         = {args.sparsity:.4f}")
+        print(f"  time             = {t_elapsed:.4f} s\n")
 
         with open(log_file, 'a') as f:
             f.write(f'graph #{index + 1:d}  '
-                    f'(fid+={fid:.4f}, fid-={fid_inv:.4f})\n')
+                    f'(fid+={fid:.4f}, fid-={fid_inv:.4f}, '
+                    f'gap={gap:.6e}, sum_phi={sum_phi:.4f}, delta_f={delta_f:.4f}, '
+                    f'stability={stability:.4f}, time={t_elapsed:.4f}s)\n')
 
         fid_sum     += fid
         fid_inv_sum += fid_inv
+        gap_sum     += gap
+        stab_sum    += stability
+        time_sum    += t_elapsed
         valid_count += 1
 
-    # ── 汇总结果 ───────────────────────────────────────────────────
     if valid_count == 0:
         print('No valid graphs to evaluate.')
         return
 
     avg_fid     = fid_sum     / valid_count
     avg_fid_inv = fid_inv_sum / valid_count
+    avg_gap     = gap_sum     / valid_count
+    avg_stab    = stab_sum    / valid_count
+    avg_time    = time_sum    / valid_count
 
     summary = (
         f'\n=== Final Results ({valid_count} graphs) ===\n'
-        f'  Fidelity+  = {avg_fid:.4f}  (higher is better)\n'
-        f'  Fidelity-  = {avg_fid_inv:.4f}  (lower is better)\n'
-        f'  Sparsity   = {args.sparsity:.4f}\n'
+        f'  Fidelity+        = {avg_fid:.4f}  (higher is better)\n'
+        f'  Fidelity-        = {avg_fid_inv:.4f}  (lower is better)\n'
+        f'  Efficiency Gap   = {avg_gap:.6e}  (lower is better)\n'
+        f'  Stability        = {avg_stab:.4f}  (higher is better)\n'
+        f'  Sparsity         = {args.sparsity:.4f}\n'
+        f'  Avg time/graph   = {avg_time:.4f} s\n'
     )
     print(summary)
     with open(log_file, 'a') as f:
