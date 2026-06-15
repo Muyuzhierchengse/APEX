@@ -383,8 +383,8 @@ class PGExplainer(nn.Module):
       :class:`torch_geometric.nn.MessagePassing` layers in the :attr:`model`.
 
     """
-    def __init__(self, model, in_channels: int, device, explain_graph: bool = True, epochs: int = 20,
-                 lr: float = 0.005, coff_size: float = 0.01, coff_ent: float = 5e-4,
+    def __init__(self, model, in_channels: int, device, explain_graph: bool = True, epochs: int = 5,
+                 lr: float = 0.00001, coff_size: float = 0.001, coff_ent: float = 5e-6,
                  t0: float = 5.0, t1: float = 1.0, sample_bias: float = 0.0, num_hops: Optional[int] = None):
         super(PGExplainer, self).__init__()
         self.model = model
@@ -472,19 +472,95 @@ class PGExplainer(nn.Module):
 
     def __loss__(self, prob: Tensor, ori_pred: int):
         logit = prob[ori_pred]
-        logit = logit + EPS
-        pred_loss = - torch.log(logit)
+        logit = torch.clamp(logit, min=EPS, max=1.0-EPS)
+        pred_loss = -torch.log(logit + EPS)
+        
+        # 检查pred_loss是否有效
+        if torch.isnan(pred_loss) or torch.isinf(pred_loss):
+            print(f"Warning: pred_loss is NaN or Inf, prob[{ori_pred}]={prob[ori_pred]}")
+            pred_loss = torch.tensor(0.0, device=prob.device)
 
         # size
         edge_mask = self.sparse_mask_values
+        
+        # 详细检查edge_mask
+        if edge_mask is None:
+            print("Error: edge_mask is None!")
+            edge_mask = torch.ones(1, device=prob.device) * 0.5
+            self.sparse_mask_values = edge_mask
+        
+        if torch.isnan(edge_mask).any() or torch.isinf(edge_mask).any():
+            print(f"Warning: edge_mask contains NaN or Inf. Shape: {edge_mask.shape}, "
+                f"NaN count: {torch.isnan(edge_mask).sum()}, Inf count: {torch.isinf(edge_mask).sum()}")
+            edge_mask = torch.nan_to_num(edge_mask, nan=0.5, posinf=1.0-EPS, neginf=EPS)
+            self.sparse_mask_values = edge_mask
+        
+        # 确保edge_mask在有效范围
+        edge_mask = torch.clamp(edge_mask, min=EPS, max=1.0-EPS)
+        
         size_loss = self.coff_size * torch.sum(edge_mask)
 
-        # entropy
-        edge_mask = edge_mask * 0.99 + 0.005
-        mask_ent = - edge_mask * torch.log(edge_mask) - (1 - edge_mask) * torch.log(1 - edge_mask)
-        mask_ent_loss = self.coff_ent * torch.mean(mask_ent)
+        # entropy - 完全重写，使用更稳定的实现
+        # 使用二值交叉熵的稳定版本
+        # H = -p*log(p) - (1-p)*log(1-p)
+        
+        # 方法1：直接使用PyTorch的binary_cross_entropy
+        # 但我们需要自己实现熵，因为BCE需要target
+        
+        # 方法2：使用数值稳定的log
+        # 避免直接计算log(0)的情况
+        p = edge_mask
+        
+        # 使用torch.where来避免log(0)
+        # 当p接近0时，-p*log(p)趋向于0
+        # 当p接近1时，-(1-p)*log(1-p)趋向于0
+        term1 = torch.where(
+            p > EPS,
+            -p * torch.log(p),
+            torch.zeros_like(p)
+        )
+        
+        term2 = torch.where(
+            (1.0 - p) > EPS,
+            -(1.0 - p) * torch.log(1.0 - p),
+            torch.zeros_like(p)
+        )
+        
+        mask_ent = term1 + term2
+        
+        # 检查mask_ent的每个组成部分
+        if torch.isnan(term1).any():
+            print(f"Warning: term1 has NaN. p stats - min: {p.min()}, max: {p.max()}, mean: {p.mean()}")
+            term1 = torch.nan_to_num(term1, nan=0.0)
+        
+        if torch.isnan(term2).any():
+            print(f"Warning: term2 has NaN. (1-p) stats - min: {(1-p).min()}, max: {(1-p).max()}")
+            term2 = torch.nan_to_num(term2, nan=0.0)
+        
+        if torch.isnan(mask_ent).any() or torch.isinf(mask_ent).any():
+            print(f"Warning: mask_ent has NaN/Inf after computation. Setting invalid values to 0")
+            mask_ent = torch.nan_to_num(mask_ent, nan=0.0, posinf=0.0, neginf=0.0)
+        
+        # 使用sum而不是mean，避免除以0的情况
+        if mask_ent.numel() > 0:
+            mask_ent_loss = self.coff_ent * torch.sum(mask_ent) / max(mask_ent.numel(), 1)
+        else:
+            mask_ent_loss = torch.tensor(0.0, device=prob.device)
+        
+        # 最终检查mask_ent_loss
+        if torch.isnan(mask_ent_loss) or torch.isinf(mask_ent_loss):
+            print(f"Warning: mask_ent_loss is NaN or Inf, setting to 0")
+            print(f"  mask_ent stats - min: {mask_ent.min()}, max: {mask_ent.max()}, mean: {mask_ent.mean()}")
+            print(f"  edge_mask stats - min: {edge_mask.min()}, max: {edge_mask.max()}, mean: {edge_mask.mean()}")
+            mask_ent_loss = torch.tensor(0.0, device=prob.device)
 
         loss = pred_loss + size_loss + mask_ent_loss
+        
+        # 最终检查
+        if torch.isnan(loss) or torch.isinf(loss):
+            print(f"Warning: Final loss is NaN or Inf. pred_loss={pred_loss}, size_loss={size_loss}, mask_ent_loss={mask_ent_loss}")
+            loss = torch.tensor(0.0, device=prob.device, requires_grad=True)
+        
         return loss
 
     def get_subgraph(self,
@@ -536,15 +612,24 @@ class PGExplainer(nn.Module):
         r""" Sample from the instantiation of concrete distribution when training """
         if training:
             bias = self.sample_bias
-            random_noise = torch.rand(log_alpha.shape) * (1 - 2 * bias) + bias
+            random_noise = torch.rand(log_alpha.shape, device=log_alpha.device)
+            random_noise = torch.clamp(random_noise, min=1e-8, max=1.0 - 1e-8)
             random_noise = torch.log(random_noise) - torch.log(1.0 - random_noise)
             gate_inputs = (random_noise.to(log_alpha.device) + log_alpha) / beta
+            gate_inputs = torch.clamp(gate_inputs, min=-10, max=10)
             gate_inputs = gate_inputs.sigmoid()
         else:
             gate_inputs = log_alpha.sigmoid()
-
+        
+        # 添加检查
+        if torch.isnan(gate_inputs).any() or torch.isinf(gate_inputs).any():
+            print("Warning: gate_inputs has NaN/Inf in concrete_sample")
+            gate_inputs = torch.nan_to_num(gate_inputs, nan=0.5, posinf=1.0-EPS, neginf=EPS)
+        
+        # 确保输出在有效范围内
+        gate_inputs = torch.clamp(gate_inputs, min=EPS, max=1.0-EPS)
+        
         return gate_inputs
-
     def explain(self,
                 x: Tensor,
                 edge_index: Tensor,
@@ -553,23 +638,21 @@ class PGExplainer(nn.Module):
                 training: bool = False,
                 **kwargs)\
             -> Tuple[float, Tensor]:
-        r""" explain the GNN behavior for graph with explanation network
-
-        Args:
-            x (:obj:`torch.Tensor`): Node feature matrix with shape
-              :obj:`[num_nodes, dim_node_feature]`
-            edge_index (:obj:`torch.Tensor`): Graph connectivity in COO format
-              with shape :obj:`[2, num_edges]`
-            embed (:obj:`torch.Tensor`): Node embedding matrix with shape :obj:`[num_nodes, dim_embedding]`
-            tmp (:obj`float`): The temperature parameter fed to the sample procedure
-            training (:obj:`bool`): Whether in training procedure or not
-
-        Returns:
-            probs (:obj:`torch.Tensor`): The classification probability for graph with edge mask
-            edge_mask (:obj:`torch.Tensor`): The probability mask for graph edges
-        """
+        r""" explain the GNN behavior for graph with explanation network """
         node_idx = kwargs.get('node_idx')
         nodesize = embed.shape[0]
+        
+        # 确保embed在正确的设备上并进行数值稳定化
+        embed = embed.to(self.device)
+        
+        # 检查embed是否包含NaN或Inf
+        if torch.isnan(embed).any() or torch.isinf(embed).any():
+            print("Warning: embed contains NaN or Inf, replacing with zeros")
+            embed = torch.nan_to_num(embed, nan=0.0, posinf=1.0, neginf=-1.0)
+        
+        # 归一化embed以防止数值溢出
+        embed = torch.clamp(embed, min=-10, max=10)
+        
         if self.explain_graph:
             col, row = edge_index
             f1 = embed[col]
@@ -586,16 +669,34 @@ class PGExplainer(nn.Module):
         h = f12self.to(self.device)
         for elayer in self.elayers:
             h = elayer(h)
+            # 在每层后进行数值检查和稳定化
+            if torch.isnan(h).any() or torch.isinf(h).any():
+                h = torch.nan_to_num(h, nan=0.0, posinf=1.0, neginf=-1.0)
+            h = torch.clamp(h, min=-10, max=10)
+        
         values = h.reshape(-1)
         values = self.concrete_sample(values, beta=tmp, training=training)
+        
+        # 强制将values限制在(0, 1)范围内，避免边界值
+        values = torch.clamp(values, min=EPS, max=1.0-EPS)
+        
+        # 检查values是否有效
+        if torch.isnan(values).any() or torch.isinf(values).any():
+            print("Warning: values contains NaN or Inf after concrete_sample")
+            values = torch.nan_to_num(values, nan=0.5, posinf=1.0-EPS, neginf=EPS)
+            values = torch.clamp(values, min=EPS, max=1.0-EPS)
+        
         self.sparse_mask_values = values
         mask_sparse = torch.sparse_coo_tensor(
             edge_index, values, (nodesize, nodesize)
-        )
+        ).to(self.device)
         mask_sigmoid = mask_sparse.to_dense()
         # set the symmetric edge weights
         sym_mask = (mask_sigmoid + mask_sigmoid.transpose(0, 1)) / 2
         edge_mask = sym_mask[edge_index[0], edge_index[1]]
+        
+        # 再次确保edge_mask在有效范围内
+        edge_mask = torch.clamp(edge_mask, min=EPS, max=1.0-EPS)
 
         # inverse the weights before sigmoid in MessagePassing Module
         self.__clear_masks__()
@@ -643,13 +744,35 @@ class PGExplainer(nn.Module):
                     pred_label = prob.argmax(-1).item()
                     pred_list.append(pred_label)
 
+                has_nan_grad = False
+                for param in self.elayers.parameters():
+                    if param.grad is not None:
+                        if torch.isnan(param.grad).any() or torch.isinf(param.grad).any():
+                            has_nan_grad = True
+                            break
+
+                if has_nan_grad:
+                    print(f"Warning: Skipping optimizer step due to NaN/Inf gradients at epoch {epoch}")
+                    optimizer.zero_grad()
+                    continue
+
+                torch.nn.utils.clip_grad_norm_(self.elayers.parameters(), max_norm=1.0)
                 optimizer.step()
                 duration += time.perf_counter() - tic
                 print(f'Epoch: {epoch} | Loss: {loss}')
+
+        # ── 节点分类分支 ──────────────────────────────────────────────────────
         else:
+            # dataset 可能是单张 Data 对象（节点分类场景，如 BA_shapes）
+            # 也可能是支持下标的数据集对象，统一处理
+            if hasattr(dataset, 'x'):
+                # 单张 Data 对象，直接使用
+                data = dataset.to(self.device)
+            else:
+                # 列表/数据集对象，取第一张图
+                data = dataset[0].to(self.device)
+
             with torch.no_grad():
-                data = dataset[0]
-                data.to(self.device)
                 self.model.eval()
                 explain_node_index_list = torch.where(data.train_mask)[0].tolist()
                 pred_dict = {}
@@ -676,6 +799,19 @@ class PGExplainer(nn.Module):
                     loss_tmp.backward()
                     loss += loss_tmp.item()
 
+                has_nan_grad = False
+                for param in self.elayers.parameters():
+                    if param.grad is not None:
+                        if torch.isnan(param.grad).any() or torch.isinf(param.grad).any():
+                            has_nan_grad = True
+                            break
+
+                if has_nan_grad:
+                    print(f"Warning: Skipping optimizer step due to NaN/Inf gradients at epoch {epoch}")
+                    optimizer.zero_grad()
+                    continue
+
+                torch.nn.utils.clip_grad_norm_(self.elayers.parameters(), max_norm=1.0)
                 optimizer.step()
                 duration += time.perf_counter() - tic
                 print(f'Epoch: {epoch} | Loss: {loss/len(explain_node_index_list)}')
@@ -686,21 +822,6 @@ class PGExplainer(nn.Module):
                 edge_index: Tensor,
                 **kwargs)\
             -> Tuple[None, List, List[Dict]]:
-        r""" explain the GNN behavior for graph and calculate the metric values.
-        The interface for the :class:`dig.evaluation.XCollector`.
-
-        Args:
-            x (:obj:`torch.Tensor`): Node feature matrix with shape
-              :obj:`[num_nodes, dim_node_feature]`
-            edge_index (:obj:`torch.Tensor`): Graph connectivity in COO format
-              with shape :obj:`[2, num_edges]`
-            kwargs(:obj:`Dict`):
-              The additional parameters
-                - top_k (:obj:`int`): The number of edges in the final explanation results
-
-        :rtype: (:obj:`None`, List[torch.Tensor], List[Dict])
-        """
-        # set default subgraph with 10 edges
         num_classes = kwargs.get('num_classes')
         top_k = kwargs.get('top_k') if kwargs.get('top_k') is not None else 10
         x = x.to(self.device)
@@ -712,14 +833,13 @@ class PGExplainer(nn.Module):
         pred_labels = probs.argmax(dim=-1)
         embed = self.model.get_emb(x, edge_index)
 
+        # ── 图分类分支（完全不动）────────────────────────────────────────────
         if self.explain_graph:
-            # original value
             probs = probs.squeeze()
             label = pred_labels
-            # masked value
             _, edge_mask = self.explain(x, edge_index, embed=embed, tmp=1.0, training=False)
             return [edge_mask for _ in range(num_classes)]
-            
+
             data = Data(x=x, edge_index=edge_index)
             selected_nodes = calculate_selected_nodes(data, edge_mask, top_k)
             masked_node_list = [node for node in range(data.x.shape[0]) if node in selected_nodes]
@@ -735,46 +855,125 @@ class PGExplainer(nn.Module):
 
             sparsity_score = 1 - len(selected_nodes) / data.x.shape[0]
 
+            pred_mask = [edge_mask]
+            related_preds = [{
+                'masked': masked_pred,
+                'maskout': maskout_pred,
+                'origin': probs[label],
+                'sparsity': sparsity_score}]
+            return None, pred_mask, related_preds
+
+        # ── 节点分类分支 ──────────────────────────────────────────────────────
         else:
             node_idx = kwargs.get('node_idx')
-            assert kwargs.get('node_idx') is not None, "please input the node_idx"
-            # original value
-            probs = probs.squeeze()[node_idx]
-            label = pred_labels[node_idx]
-            # masked value
-            x, edge_index, _, subset, _ = self.get_subgraph(node_idx, x, edge_index)
+            assert node_idx is not None, "please input the node_idx"
+
+            num_nodes = x.size(0)
+            num_edges = edge_index.size(1)
+
+            max_nodes = kwargs.get('max_nodes', None)
+            sparsity_val = kwargs.get('sparsity', 0.5)
+            if max_nodes is not None:
+                num_keep = max(1, int(max_nodes))
+            else:
+                num_keep = max(1, int(num_nodes * (1 - sparsity_val)))
+
+            # ── 1. 提取 k-hop 子图（用于 explain 网络推理）────────────────
+            x_sub, edge_index_sub, _, subset, _ = self.get_subgraph(
+                node_idx, x, edge_index
+            )
             new_node_idx = torch.where(subset == node_idx)[0]
-            embed = self.model.get_emb(x, edge_index)
-            _, edge_mask = self.explain(x, edge_index, embed, tmp=1.0, training=False, node_idx=new_node_idx)
-            return [edge_mask for _ in range(num_classes)]
+            embed_sub = self.model.get_emb(x_sub, edge_index_sub)
 
-            data = Data(x=x, edge_index=edge_index)
-            selected_nodes = calculate_selected_nodes(data, edge_mask, top_k)
-            masked_node_list = [node for node in range(data.x.shape[0]) if node in selected_nodes]
-            maskout_nodes_list = [node for node in range(data.x.shape[0]) if node not in selected_nodes]
-            value_func = GnnNetsNC2valueFunc(self.model,
-                                             node_idx=new_node_idx,
-                                             target_class=label)
+            # ── 2. 在子图上运行 explain，得到子图边掩码 ───────────────────
+            _, edge_mask_sub = self.explain(
+                x_sub, edge_index_sub, embed_sub,
+                tmp=1.0, training=False, node_idx=new_node_idx
+            )
+            # edge_mask_sub shape: [E_sub]，对应 edge_index_sub 的边
 
-            masked_pred = gnn_score(masked_node_list, data,
-                                    value_func=value_func,
-                                    subgraph_building_method='zero_filling')
+            # ── 3. 将子图边掩码映射回全图 ─────────────────────────────────
+            # subset 记录子图节点在全图中的原始编号（relabel_nodes=True 时已重标签）
+            # edge_index_sub 是重标签后的子图边，需要用 subset 还原全图节点编号
+            # 先找全图 edge_index 中哪些边属于子图内部
+            subset_set = set(subset.cpu().tolist())
 
-            maskout_pred = gnn_score(maskout_nodes_list, data,
-                                     value_func=value_func,
-                                     subgraph_building_method='zero_filling')
+            # 全图节点编号 → 子图节点编号的映射
+            global_to_sub = {int(subset[i]): i for i in range(len(subset))}
 
-            sparsity_score = sparsity(masked_node_list, data,
-                                      subgraph_building_method='zero_filling')
+            # 构建子图边（全图编号）→ 掩码值 的查找表
+            # edge_index_sub 是子图内重标签编号，转回全图编号
+            sub_src_global = subset[edge_index_sub[0]].cpu().tolist()
+            sub_dst_global = subset[edge_index_sub[1]].cpu().tolist()
+            sub_edge_dict = {}
+            for i, (u, v) in enumerate(zip(sub_src_global, sub_dst_global)):
+                sub_edge_dict[(u, v)] = edge_mask_sub[i].item()
 
-        # return variables
-        pred_mask = [edge_mask]
-        related_preds = [{
-            'masked': masked_pred,
-            'maskout': maskout_pred,
-            'origin': probs[label],
-            'sparsity': sparsity_score}]
-        return None, pred_mask, related_preds
+            # 全图 edge_mask：子图内的边取对应掩码值，子图外的边取 0
+            edge_mask_full = torch.zeros(num_edges, device=self.device)
+            ei_cpu = edge_index.cpu()
+            for i in range(num_edges):
+                u = int(ei_cpu[0, i])
+                v = int(ei_cpu[1, i])
+                if (u, v) in sub_edge_dict:
+                    edge_mask_full[i] = sub_edge_dict[(u, v)]
+                elif (v, u) in sub_edge_dict:
+                    # 无向图：若只存了一个方向，也匹配
+                    edge_mask_full[i] = sub_edge_dict[(v, u)]
+
+            # ── 4. 从全图 edge_mask 聚合出全图节点分数 ───────────────────
+            raw_node_scores = []
+            node_masks_list = []
+
+            # 目标节点的直接邻居（含自身），用于限定 node_mask 范围
+            s_cpu = edge_index[0].cpu()
+            d_cpu = edge_index[1].cpu()
+            node_idx_scalar = int(node_idx) if isinstance(node_idx, int) \
+                else node_idx.item()
+            neighbors = set()
+            neighbors.add(node_idx_scalar)
+            for i in range(num_edges):
+                u, v = s_cpu[i].item(), d_cpu[i].item()
+                if u == node_idx_scalar:
+                    neighbors.add(v)
+                if v == node_idx_scalar:
+                    neighbors.add(u)
+            neighbors       = sorted(neighbors)
+            neighbor_tensor = torch.tensor(
+                neighbors, dtype=torch.long, device=self.device
+            )
+
+            for cls in range(num_classes):
+                # 所有类别共享同一套子图掩码（PGExplainer 只训练一个掩码网络）
+                # node_scores：通过边掩码聚合
+                ns  = torch.zeros(num_nodes, device=self.device)
+                deg = torch.zeros(num_nodes, device=self.device)
+                src_g = edge_index[0]
+                dst_g = edge_index[1]
+                ones  = torch.ones(num_edges, device=self.device)
+                ns.scatter_add_(0, src_g, edge_mask_full)
+                ns.scatter_add_(0, dst_g, edge_mask_full)
+                deg.scatter_add_(0, src_g, ones)
+                deg.scatter_add_(0, dst_g, ones)
+                node_scores = ns / (deg + EPS)   # [N]
+                raw_node_scores.append(node_scores)
+
+                # node_mask：在直接邻居范围内选 top-k
+                scores_sub_nb = node_scores[neighbor_tensor]
+                k_sub         = min(num_keep, len(neighbors))
+                topk_local    = scores_sub_nb.topk(k_sub).indices
+                topk_global   = neighbor_tensor[topk_local]
+
+                nm = torch.zeros(num_nodes, dtype=torch.float32, device=self.device)
+                nm[topk_global] = 1.0
+                node_masks_list.append(nm)
+
+            # ── 5. 挂载供 main.py 使用的属性 ─────────────────────────────
+            self.last_node_scores = raw_node_scores
+
+            # 返回与图分类一致的格式：(edge_masks, node_masks)
+            edge_masks = [edge_mask_full for _ in range(num_classes)]
+            return edge_masks, node_masks_list
 
     def visualization(self, data: Data, edge_mask: Tensor, top_k: int, plot_utils: PlotUtils,
                       words: Optional[list] = None, node_idx: int = None, vis_name: Optional[str] = None):

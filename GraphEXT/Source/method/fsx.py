@@ -96,7 +96,7 @@ class FSX:
             if self.explain_graph:
                 y_original = output[0]  # Graph-level: take first (only) output
             else:
-                y_original = output[0]  # Node-level: take target node          这里对于节点分类，还需要修改
+                y_original = output[0]  # Node-level: take target node          
             prediction = y_original.argmax(-1).item()
         
         return y_original, prediction
@@ -271,7 +271,7 @@ class FSX:
             num_edges_to_keep = min(max_nodes, len(sorted_edges))
         else:
             # Keep top 20% of edges by default
-            num_edges_to_keep = max(1, int(0.2 * len(sorted_edges)))
+            num_edges_to_keep = max(1, int(0.2* len(sorted_edges))) 
         
         top_edges = sorted_edges[:num_edges_to_keep]
         
@@ -325,7 +325,7 @@ class FSX:
         
         # Compute x0 for sigmoid (mean of all edge weights)
         all_weights = list(edge_weights.values())
-        x0 = np.mean(all_weights) if all_weights else 0.0
+        x0 = np.mean(all_weights) if all_weights else 0.0   #mean
         temperature = 1.0
         
         # Monte Carlo sampling
