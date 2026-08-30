@@ -143,17 +143,14 @@ class ExplainerBase(nn.Module):
         if self.molecule:
             atomic_num = torch.clone(y)
 
-        # Only operate on a k-hop subgraph around `node_idx`.
         subset, edge_index, _, hard_edge_mask = subgraph(
             node_idx, self.__num_hops__, edge_index, relabel_nodes=True,
             num_nodes=None, flow=self.__flow__())
 
         edge_mask = edge_mask[hard_edge_mask]
 
-        # --- temp ---
         edge_mask[edge_mask == float('inf')] = 1
         edge_mask[edge_mask == - float('inf')] = 0
-        # ---
 
         if threshold is not None:
             edge_mask = (edge_mask >= threshold).to(torch.float)
@@ -191,7 +188,6 @@ class ExplainerBase(nn.Module):
         kwargs['node_size'] = kwargs.get('node_size') or 250
         kwargs['cmap'] = kwargs.get('cmap') or 'cool'
 
-        # calculate Graph positions
         pos = nx.kamada_kawai_layout(G)
         ax = plt.gca()
 
@@ -201,14 +197,13 @@ class ExplainerBase(nn.Module):
                 textcoords='data', arrowprops=dict(
                     arrowstyle="->",
                     lw=max(data['att'], 0.5) * 2,
-                    alpha=max(data['att'], 0.4),  # alpha control transparency
-                    color='#e1442a',  # color control color
+                    alpha=max(data['att'], 0.4),
+                    color='#e1442a',
                     shrinkA=sqrt(kwargs['node_size']) / 2.0,
                     shrinkB=sqrt(kwargs['node_size']) / 2.0,
-                    connectionstyle="arc3,rad=0.08",  # rad control angle
+                    connectionstyle="arc3,rad=0.08",
                 ))
         nx.draw_networkx_nodes(G, pos, node_color=node_colors, **kwargs)
-        # define node labels
         if self.molecule:
             if nolabel:
                 node_labels = {n: f'{self.table(atomic_num[n].int().item())}'
@@ -227,10 +222,9 @@ class ExplainerBase(nn.Module):
     def eval_related_pred(self, x: Tensor, edge_index: Tensor, edge_masks: List[Tensor], **kwargs):
 
         node_idx = kwargs.get('node_idx')
-        node_idx = 0 if node_idx is None else node_idx  # graph level: 0, node level: node_idx
+        node_idx = 0 if node_idx is None else node_idx
         related_preds = []
 
-        # change the mask from -inf ~ +inf into 0 ~ 1
         for ex_label, edge_mask in enumerate(edge_masks):
             if self.hard_edge_mask is not None:
                 sparsity = 1.0 - (edge_mask[self.hard_edge_mask] != 0).sum() / edge_mask[self.hard_edge_mask].size(0)
@@ -243,11 +237,9 @@ class ExplainerBase(nn.Module):
             self.edge_mask.data = edge_mask
             masked_pred = self.model(x=x, edge_index=edge_index, **kwargs)
 
-            # mask out important elements for fidelity calculation
-            self.edge_mask.data = 1.0 - edge_mask  # keep Parameter's id
+            self.edge_mask.data = 1.0 - edge_mask
             maskout_pred = self.model(x=x, edge_index=edge_index, **kwargs)
 
-            # zero_mask
             self.edge_mask.data = torch.zeros(edge_mask.size(), device=self.device)
             zero_mask_pred = self.model(x=x, edge_index=edge_index, **kwargs)
 
@@ -257,7 +249,6 @@ class ExplainerBase(nn.Module):
                                   'origin': ori_pred[node_idx],
                                   'sparsity': sparsity})
 
-            # Adding proper activation function to the models' outputs.
             tmp_result_dict = {}
             for key, pred in related_preds[ex_label].items():
                 if key in ['sparsity']:
@@ -285,21 +276,17 @@ class WalkBase(ExplainerBase):
                 hooks.append(module.register_forward_hook(forward_hook))
 
         def forward_hook(module: nn.Module, input: Tuple[Tensor], output: Tensor):
-            # input contains x and edge_index
             if detach:
                 layer_extractor.append((module, input[0].clone().detach(), output.clone().detach()))
             else:
                 layer_extractor.append((module, input[0], output))
 
-        # --- register hooks ---
         self.model.apply(register_hook)
 
         pred = self.model(x, edge_index)
 
         for hook in hooks:
             hook.remove()
-
-        # --- divide layer sets ---
 
         walk_steps = []
         fc_steps = []
@@ -321,7 +308,6 @@ class WalkBase(ExplainerBase):
 
         for walk_step in walk_steps:
             if hasattr(walk_step['module'][0], 'nn') and walk_step['module'][0].nn is not None:
-                # We don't allow any outside nn during message flow process in GINs
                 walk_step['module'] = [walk_step['module'][0]]
 
         if split_fc:
@@ -342,28 +328,23 @@ class WalkBase(ExplainerBase):
         walk_indices_list = []
         for edge_idx in pick_edge_indices:
 
-            # Adding one edge
             walk_indices.append(edge_idx)
             _, new_src = src, tgt = edge_index[:, edge_idx]
             next_edge_indices = np.array((edge_index[0, :] == new_src).nonzero().view(-1))
 
-            # Finding next edge
             if len(walk_indices) >= num_layers:
-                # return one walk
                 walk_indices_list.append(walk_indices.copy())
             else:
                 walk_indices_list += self.walks_pick(edge_index, next_edge_indices, walk_indices, num_layers)
 
-            # remove the last edge
             walk_indices.pop(-1)
 
         return walk_indices_list
 
     def eval_related_pred(self, x: Tensor, edge_index: Tensor, masks: List[Tensor], **kwargs):
-        # place to add accuracy
         node_idx = kwargs.get('node_idx')
         pred_label = kwargs.get('pred_label')
-        node_idx = 0 if node_idx is None else node_idx  # graph level: 0, node level: node_idx
+        node_idx = 0 if node_idx is None else node_idx
 
         related_preds = []
 
@@ -373,7 +354,6 @@ class WalkBase(ExplainerBase):
             else:
                 sparsity = 1.0 - (edge_mask != 0).sum() / edge_mask.size(0)
 
-            # origin pred
             for mask in self.edge_mask:
                 mask.data = torch.ones(edge_mask.size(), device=self.device)
             ori_pred = self.model(x=x, edge_index=edge_index, **kwargs)
@@ -382,24 +362,20 @@ class WalkBase(ExplainerBase):
                 mask.data = edge_mask
             masked_pred = self.model(x=x, edge_index=edge_index, **kwargs)
 
-            # mask out important elements for fidelity calculation
             for mask in self.edge_mask:
                 mask.data = 1.0 - edge_mask
             maskout_pred = self.model(x=x, edge_index=edge_index, **kwargs)
 
-            # zero_mask
             for mask in self.edge_mask:
                 mask.data = torch.zeros(edge_mask.size(), device=self.device)
             zero_mask_pred = self.model(x=x, edge_index=edge_index, **kwargs)
 
-            # Store related predictions for further evaluation.
             related_preds.append({'zero': zero_mask_pred[node_idx],
                                   'masked': masked_pred[node_idx],
                                   'maskout': maskout_pred[node_idx],
                                   'origin': ori_pred[node_idx],
                                   'sparsity': sparsity})
 
-            # Adding proper activation function to the models' outputs.
             if pred_label:
                 label = pred_label
             tmp_result_dict = {}
@@ -416,7 +392,7 @@ class WalkBase(ExplainerBase):
 
         walks_ids = walks['ids']
         walks_score = walks['score'][:walks_ids.shape[0], ex_label].reshape(-1)
-        if walks_ids.max() <= self.num_edges - 1:  # num_edges includes the self-loop
+        if walks_ids.max() <= self.num_edges - 1:
             idx_ensemble = torch.cat([(walks_ids == i).int().sum(dim=1).unsqueeze(0) for i in range(self.num_edges)], dim=0)
         else:
             idx_ensemble = torch.cat([(walks_ids == i).int().sum(dim=1).unsqueeze(0) for i in range(self.num_edges + self.num_nodes)], dim=0)
@@ -486,7 +462,7 @@ def subgraph(node_idx, num_hops, edge_index, relabel_nodes=False,
     if flow == 'target_to_source':
         row, col = edge_index
     else:
-        col, row = edge_index # edge_index 0 to 1, col: source, row: target
+        col, row = edge_index
 
     node_mask = row.new_empty(num_nodes, dtype=torch.bool)
     edge_mask = row.new_empty(row.size(0), dtype=torch.bool)
@@ -572,7 +548,6 @@ class FlowX(WalkBase):
 
         self.model.eval()
 
-        # Initial original prediction
         _raw_pred = self.model(x, edge_index)
         if isinstance(_raw_pred, (tuple, list)):
             _raw_pred = _raw_pred[0]
@@ -580,7 +555,6 @@ class FlowX(WalkBase):
             _raw_pred = _raw_pred.unsqueeze(0)
         self.ori_logits_pred = _raw_pred.softmax(1)
 
-        # Edge Index with self loop
         edge_index, _ = remove_self_loops(edge_index)
         edge_index_with_loop, _ = add_self_loops(edge_index, num_nodes=self.num_nodes)
         walk_indices_list = torch.tensor(
@@ -788,7 +762,6 @@ class FlowX(WalkBase):
             layer_edge_mask_list_stacked = torch.stack(layer_edge_mask_list, dim=0) * float('inf')
 
             if self.explain_graph:
-                # 图分类：原始批处理路径
                 for layer_idx in range(self.num_layers):
                     self.edge_mask[layer_idx].data = torch.cat(
                         [layer_edge_mask_list_stacked[:, layer_idx, :self.num_edges].reshape(-1),
@@ -802,10 +775,9 @@ class FlowX(WalkBase):
                 last_subsets_output = torch.cat([self.ori_logits_pred, subsets_output.clone()[:-1]], dim=0)
 
             else:
-                # 节点分类：逐条前向
                 subsets_output = torch.zeros(self.ns_per_iter, nc, device=self.device)
                 for sub_idx in range(self.ns_per_iter):
-                    cur_layer_masks = layer_edge_mask_list[sub_idx] * float('inf')  # [num_layers, E_with_loop]
+                    cur_layer_masks = layer_edge_mask_list[sub_idx] * float('inf')
                     for layer_idx, module in enumerate(self.mp_layers):
                         full = torch.cat([
                             cur_layer_masks[layer_idx, :self.num_edges],

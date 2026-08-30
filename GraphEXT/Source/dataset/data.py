@@ -32,7 +32,7 @@ def load_dataset(data_path, dataset):
         num_classes = dataset.num_classes
         return data, 1, dim_node, num_classes
 
-    if dataset in ['Graph-SST2', 'Graph-Twitter']:
+    if dataset in ['Graph-SST2']:
         dataset = SentiGraphDataset(data_path, dataset)
         dataset.data.x = dataset.data.x.to(torch.float32)
         dataset.data.y = dataset.data.y
@@ -40,39 +40,10 @@ def load_dataset(data_path, dataset):
         dataset = MoleculeDataset(data_path, dataset)
         dataset.data.x = dataset.data.x.to(torch.float32)
         dataset.data.y = dataset.data.y[:, 0]
-    if dataset in ['BA_2Motifs']:
-        dataset = SynGraphDataset(data_path, dataset)
-        dataset.data.x = dataset.data.x.to(torch.float32)
-        dataset.data.y = dataset.data.y
     if dataset in ['BACE']:
         dataset = MoleculeDataset(data_path, dataset)
         dataset.data.x = dataset.data.x.to(torch.float32)
         dataset.data.y = dataset.data.y[:, 0]
-    if dataset in ['ClinTox']:
-        dataset = MoleculeDataset(data_path, dataset)
-        dataset.data.x = dataset.data.x.to(torch.float32)
-        raw_y = dataset.data.y[:, 1]
-        dataset.data.y = raw_y.clamp(0, 1).long()
-        valid_mask = ~torch.isnan(raw_y) & (raw_y != -1)
-        valid_idx = valid_mask.nonzero(as_tuple=True)[0].tolist()
-        dataset = dataset[valid_idx]
-    if dataset in ['Tox21']:
-        dataset = MoleculeDataset(data_path, dataset)
-        dataset.data.x = dataset.data.x.to(torch.float32)
-        raw_y = dataset.data.y[:, 0]
-        dataset.data.y = raw_y.clamp(0, 1).long()
-        valid_mask = ~torch.isnan(raw_y) & (raw_y != -1)
-        valid_idx = valid_mask.nonzero(as_tuple=True)[0].tolist()
-        dataset = dataset[valid_idx]
-    if dataset in ['MUTAG']:
-        raw = TUDataset(root=os.path.join(data_path, 'TUDataset'),
-                        name='MUTAG',
-                        use_node_attr=True)
-        ys = raw.data.y.clone()
-        ys = ((ys + 1) // 2).clamp(0, 1).long()
-        raw.data.x  = raw.data.x.to(torch.float32)
-        raw.data.y  = ys
-        dataset = raw
     if dataset in ['Mutagenicity']:
         raw = TUDataset(root=os.path.join(data_path, 'TUDataset'),
                         name='Mutagenicity',
@@ -83,167 +54,6 @@ def load_dataset(data_path, dataset):
                      if d.x is not None and d.x.size(0) > 0
                      and d.edge_index is not None and d.edge_index.size(1) > 0]
         dataset = raw[valid_idx]
-    if dataset in ['Spurious-Motif']:
-        dataset = SynGraphDataset(data_path, 'spurious_motif', b=0.60)
-        dataset.data.x = dataset.data.x.to(torch.float32)
-        dataset.data.y = dataset.data.y.long()
-    if dataset in ['NCI1']:
-        raw = TUDataset(root=os.path.join(data_path, 'TUDataset'),
-                        name='NCI1',
-                        use_node_attr=False)
-        raw.data.x = raw.data.x.to(torch.float32)
-        raw.data.y = raw.data.y.long()
-        dataset = raw
-    if dataset in ['ToxCast']:
-        dataset = MoleculeDataset(data_path, dataset)
-        dataset.data.x = dataset.data.x.to(torch.float32)
-        raw_y = dataset.data.y[:, 0]
-        dataset.data.y = raw_y.clamp(0, 1).long()
-        valid_mask = ~torch.isnan(raw_y) & (raw_y != -1)
-        valid_idx = valid_mask.nonzero(as_tuple=True)[0].tolist()
-        dataset = dataset[valid_idx]
-        dataset = dataset[[i for i, data in enumerate(dataset)
-                        if data.x is not None and data.x.size(0) > 0
-                        and data.edge_index is not None and data.edge_index.size(1) > 0]]
-
-    # ==================== OGB 图分类数据集 ====================
-
-    if dataset in ['ogbg-molhiv']:
-        # 二分类，单任务，41127张图，节点特征9维
-        raw = PygGraphPropPredDataset(name='ogbg-molhiv',
-                                      root=os.path.join(data_path, 'OGB'))
-        raw.data.x = raw.data.x.to(torch.float32)
-        # OGB 标签形状为 [N, 1]，取第0列并转为1D
-        raw.data.y = raw.data.y[:, 0].long()
-        # OGB 自带官方划分，转换为与现有代码一致的格式
-        split_idx = raw.get_idx_split()
-        # ===== 调试：查看数据分布 =====
-        train_y = raw.data.y[split_idx['train']]
-        val_y   = raw.data.y[split_idx['valid']]
-        test_y  = raw.data.y[split_idx['test']]
-        print(f"[molhiv] 训练集: {len(train_y)} 图, 正例={train_y.sum().item()}, 负例={(train_y==0).sum().item()}")
-        print(f"[molhiv] 验证集: {len(val_y)}  图, 正例={val_y.sum().item()}, 负例={(val_y==0).sum().item()}")
-        print(f"[molhiv] 测试集: {len(test_y)}  图, 正例={test_y.sum().item()}, 负例={(test_y==0).sum().item()}")
-        print(f"[molhiv] 节点特征维度: {raw.num_node_features}, 边特征维度: {raw.num_edge_features}")
-        print(f"[molhiv] 示例图 data[0]: {raw[0]}")
-        # ==============================
-        splitted_dataset = {
-            'train': raw[split_idx['train']],
-            'val':   raw[split_idx['valid']],
-            'test':  raw[split_idx['test']],
-        }
-        dim_node = raw.num_node_features
-        dim_edge = raw.num_edge_features if raw.num_edge_features else 0
-        num_classes = 2
-        return splitted_dataset, 1, dim_node, num_classes
-
-    if dataset in ['ogbg-ppa']:
-        # 多分类（37个类别），158100张图，节点特征无（用度特征代替），边特征7维
-        raw = PygGraphPropPredDataset(name='ogbg-ppa',
-                                      root=os.path.join(data_path, 'OGB'))
-        # ogbg-ppa 无节点特征，用节点度作为特征（1维）
-        from torch_geometric.utils import degree
-        data_list = []
-        for g in raw:
-            num_nodes = g.num_nodes
-            deg = degree(g.edge_index[0], num_nodes=num_nodes).to(torch.float32).unsqueeze(1)  # [N, 1]
-            g.x = deg
-            data_list.append(g)
-
-        raw.data.y = raw.data.y.view(-1).long()  # [N]
-
-        split_idx = raw.get_idx_split()
-
-        # 用处理后的 data_list 重新索引
-        class IndexedList:
-            def __init__(self, lst): self._lst = lst
-            def __getitem__(self, idx):
-                if hasattr(idx, '__iter__') or hasattr(idx, 'tolist'):
-                    idx = idx.tolist() if hasattr(idx, 'tolist') else list(idx)
-                    return [self._lst[i] for i in idx]
-                return self._lst[idx]
-
-        indexed = IndexedList(data_list)
-
-        splitted_dataset = {
-            'train': indexed[split_idx['train']],
-            'val':   indexed[split_idx['valid']],
-            'test':  indexed[split_idx['test']],
-        }
-        dim_node = 1       # 度特征
-        num_classes = 37
-        return splitted_dataset, 1, dim_node, num_classes
-    if dataset in ['ogbg-molpcba']:
-        # 多任务二分类（128个任务），437929张图，节点特征9维
-        # 这里取第0个任务作为单任务二分类示例，过滤掉该任务标签为NaN/-1的图
-        raw = PygGraphPropPredDataset(name='ogbg-molpcba',
-                                      root=os.path.join(data_path, 'OGB'))
-        raw.data.x = raw.data.x.to(torch.float32)
-        raw_y = raw.data.y[:, 0].float()
-        valid_mask = ~torch.isnan(raw_y) & (raw_y != -1)
-        raw.data.y = raw_y.clamp(0, 1).long()
-
-        split_idx = raw.get_idx_split()
-        # 各子集内部再过滤无效标签的图
-        def _filter_split(indices):
-            return indices[valid_mask[indices]]
-
-        splitted_dataset = {
-            'train': raw[_filter_split(split_idx['train'])],
-            'val':   raw[_filter_split(split_idx['valid'])],
-            'test':  raw[_filter_split(split_idx['test'])],
-        }
-        dim_node = raw.num_node_features
-        dim_edge = raw.num_edge_features if raw.num_edge_features else 0
-        num_classes = 2
-        return splitted_dataset, 1, dim_node, num_classes
-
-    # ==================== OGB 节点分类数据集 ====================
-
-    if dataset in ['ogbn-proteins']:
-        # 节点二分类（112个任务），这里取第0个任务
-        # 节点特征：8维边特征聚合为节点特征（OGB默认无节点特征，需手动聚合）
-        from torch_geometric.utils import to_undirected
-        from torch_scatter import scatter
-
-        raw = PygNodePropPredDataset(name='ogbn-proteins',
-                                     root=os.path.join(data_path, 'OGB'))
-        data_obj = raw[0]
-
-        # ogbn-proteins 无节点特征，将边特征按目标节点做均值聚合作为节点特征
-        edge_index = data_obj.edge_index          # [2, E]
-        edge_feat  = data_obj.edge_attr.float()   # [E, 8]
-        num_nodes  = data_obj.num_nodes
-        # 对每个节点聚合其所有入边的特征均值
-        node_feat = scatter(edge_feat, edge_index[1], dim=0,
-                            dim_size=num_nodes, reduce='mean')  # [N, 8]
-        data_obj.x = node_feat
-
-        # 取第0个任务的标签，过滤 -1
-        raw_y = data_obj.y[:, 0].float()
-        valid_node_mask = (raw_y != -1)
-        data_obj.y = raw_y.clamp(0, 1).long()
-
-        split_idx = raw.get_idx_split()
-
-        # 构造 node-level 的 Data 对象供 BA_shapes 路径使用
-        # 在 train_mask / val_mask / test_mask 上进一步屏蔽无效节点
-        n = num_nodes
-        train_mask = torch.zeros(n, dtype=torch.bool)
-        val_mask   = torch.zeros(n, dtype=torch.bool)
-        test_mask  = torch.zeros(n, dtype=torch.bool)
-        train_mask[split_idx['train']] = True
-        val_mask[split_idx['valid']]   = True
-        test_mask[split_idx['test']]   = True
-        # 与有效标签取交集
-        data_obj.train_mask = train_mask & valid_node_mask
-        data_obj.val_mask   = val_mask   & valid_node_mask
-        data_obj.test_mask  = test_mask  & valid_node_mask
-
-        dim_node   = node_feat.size(1)   # 8
-        num_classes = 2
-        # 复用 BA_shapes 的节点分类返回格式：返回单个 Data 对象
-        return data_obj, 1, dim_node, num_classes
 
     dataset.data.y = dataset.data.y.long()
     dim_node = dataset.num_node_features
@@ -255,7 +65,6 @@ def load_dataset(data_path, dataset):
 
 
 def construct_pyg_graph(node_ids, adj, node_features, y):
-    # Construct a pytorch_geometric graph from a scipy csr adjacency matrix.
     u, v, r = ssp.find(adj)
     num_nodes = adj.shape[0]
 
@@ -271,11 +80,6 @@ def construct_pyg_graph(node_ids, adj, node_features, y):
 
 
 def neighbors(fringe, A, outgoing=True):
-    # Find all 1-hop neighbors of nodes in fringe from graph A,
-    # where A is a scipy csr adjacency matrix.
-    # If outgoing=True, find neighbors with outgoing edges;
-    # otherwise, find neighbors with incoming edges (you should
-    # provide a csc matrix in this case).
     if outgoing:
         res = set(A[list(fringe)].indices)
     else:
@@ -285,7 +89,6 @@ def neighbors(fringe, A, outgoing=True):
 
 
 def k_hop_subgraph(u, num_hops, A, node_features, y):
-    # Extract the k-hop enclosing subgraph around link (src, dst) from A.
     nodes = [u]
     dists = [0, 0]
     visited = set([u])
@@ -301,7 +104,6 @@ def k_hop_subgraph(u, num_hops, A, node_features, y):
         dists = dists + [dist] * len(fringe)
     subgraph = A[nodes, :][:, nodes]
 
-    # Remove target link between the subgraph.
     subgraph[0, 1] = 0
     subgraph[1, 0] = 0
 

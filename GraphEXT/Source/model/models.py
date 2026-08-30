@@ -25,12 +25,10 @@ class GINConv(gnn.GINConv):
 
     def forward(self, x: Union[Tensor, OptPairTensor], edge_index: Adj,
                 edge_weight: OptTensor = None, task='explain', **kwargs) -> Tensor:
-        """"""
         self.num_nodes = x.shape[0]
         if isinstance(x, Tensor):
             x: OptPairTensor = (x, x)
 
-        # propagate_type: (x: OptPairTensor)
         if edge_weight is not None:
             self.edge_weight = edge_weight
             assert edge_weight.shape[0] == edge_index.shape[1]
@@ -52,10 +50,8 @@ class GINConv(gnn.GINConv):
                     hooks.append(module.register_forward_hook(forward_hook))
 
             def forward_hook(module: nn.Module, input: Tuple[Tensor], output: Tensor):
-                # input contains x and edge_index
                 layer_extractor.append((module, input[0], output))
 
-            # --- register hooks ---
             self.nn.apply(register_hook)
 
             nn_out = self.nn(out)
@@ -98,7 +94,6 @@ class GINConv(gnn.GINConv):
     def propagate(self, edge_index: Adj, size: Size = None, **kwargs):
         size = self._check_input(edge_index, size)
 
-        # Run "fused" message and aggregation (if applicable).
         if (isinstance(edge_index, SparseTensor) and self.fuse
                 and not self._explain):
             coll_dict = self._collect(self._fused_user_args, edge_index,
@@ -170,36 +165,17 @@ class GNNBasic(torch.nn.Module):
 
         return x, edge_index, batch
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 二阶多项式激活  f(x) = x + alpha * x^2
-# ──────────────────────────────────────────────────────────────────────────────
 class PolyActivation(nn.Module):
-    """
-    f(x) = x + alpha * x^2
-    保留线性残差项 x，保证梯度通路畅通（类似 ResNet skip）。
-    alpha 可学习，初始化为小值，训练中自动调节非线性强度。
-    """
     def __init__(self, alpha: float = 0.05):
         super().__init__()
         self.alpha = nn.Parameter(torch.tensor(alpha))
 
     def forward(self, x: Tensor) -> Tensor:
-        # clamp alpha 防止其绝对值过大导致 x^2 爆炸
         alpha = self.alpha.clamp(-0.5, 0.5)
         return x + alpha * x * x
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# PolyScaleNorm：纯代数幅度控制，不破坏多项式性质
-# 只在特征幅度超过阈值时才缩放，避免过度压制梯度
-# ──────────────────────────────────────────────────────────────────────────────
 class PolyScaleNorm(nn.Module):
-    """
-    纯多项式幅度控制：x * scale（逐维可学习标量缩放）
-    等价于在线性层权重上乘一个对角矩阵，完全是代数操作。
-    scale 初始化为小值（0.3），防止初期 x^2 爆炸；
-    训练中自动调节，不引入任何分段或非多项式操作。
-    """
     def __init__(self, dim: int, init_scale: float = 0.3):
         super().__init__()
         self.scale = nn.Parameter(torch.full((dim,), init_scale))
@@ -208,16 +184,7 @@ class PolyScaleNorm(nn.Module):
         return x * self.scale
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# PolyMLP：严格单激活（每层阶数恰好 ×2）
-# 结构：Linear -> PolyScaleNorm -> PolyAct -> Linear
-# 线性层使用普通 init（不用谱归一化），靠 PolyScaleNorm 控制幅度
-# ──────────────────────────────────────────────────────────────────────────────
 def _poly_mlp(in_f: int, out_f: int) -> nn.Sequential:
-    """
-    单 PolyAct：每次调用阶数 ×2。
-    L=3 层后整体阶数 = 2^3 = 8，高斯节点数 m = 4。
-    """
     lin1 = nn.Linear(in_f, out_f)
     lin2 = nn.Linear(out_f, out_f)
     nn.init.xavier_uniform_(lin1.weight, gain=1.0)
@@ -226,15 +193,12 @@ def _poly_mlp(in_f: int, out_f: int) -> nn.Sequential:
     nn.init.zeros_(lin2.bias)
     return nn.Sequential(
         lin1,
-        PolyScaleNorm(out_f),   # 幅度软限制，放在激活之前
-        PolyActivation(),       # 唯一的非线性，阶数 ×2
-        lin2,                   # 第二线性，不加激活，保持阶数不再升
+        PolyScaleNorm(out_f),
+        PolyActivation(),
+        lin2,
     )
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# PolyGINConv
-# ──────────────────────────────────────────────────────────────────────────────
 class PolyGINConv(GINConv):
     def __init__(self, in_f: int, out_f: int,
                  eps: float = 0., train_eps: bool = False, **kwargs):
@@ -246,23 +210,12 @@ class PolyGINConv(GINConv):
         )
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# PolyGIN_3l
-# ──────────────────────────────────────────────────────────────────────────────
-class PolyGIN_3l(GNNBasic):
-    """
-    Pure-polynomial GIN, 3 layers (L=3).
-    ┌─────────────────────────────────────────────────────┐
-    │  激活：PolyActivation  f(x)=x+α·x²，无 ReLU        │
-    │  归一化：PolyScaleNorm（软幅度限制），无 BN/LN      │
-    │  整体阶数：2^4 = 16；归因高斯节点数：m = 5          │
-    └─────────────────────────────────────────────────────┘
-    """
+class PolyGIN(GNNBasic):
 
     def __init__(self, model_level: str, dim_node: int,
-                 dim_hidden: int, num_classes: int):
+                 dim_hidden: int, num_classes: int, use_fL: bool = True):
         super().__init__()
-        num_layer = 3  # L = 3
+        num_layer = 4  
 
         self.conv1 = PolyGINConv(dim_node, dim_hidden)
         self.convs = nn.ModuleList([
@@ -275,21 +228,25 @@ class PolyGIN_3l(GNNBasic):
         else:
             self.readout = GlobalMeanPool()
 
-        # FFN 分类头：Linear -> PolyAct -> Dropout -> Linear
-        # 不加额外 PolyScaleNorm，让分类头梯度更自由
-        ffn_lin1 = nn.Linear(dim_hidden, dim_hidden)
-        ffn_lin2 = nn.Linear(dim_hidden, num_classes)
-        nn.init.xavier_uniform_(ffn_lin1.weight, gain=1.0)
-        nn.init.zeros_(ffn_lin1.bias)
-        nn.init.xavier_uniform_(ffn_lin2.weight, gain=0.5)
-        nn.init.zeros_(ffn_lin2.bias)
+        if use_fL:
+            ffn_lin = nn.Linear(dim_hidden, num_classes)
+            nn.init.xavier_uniform_(ffn_lin.weight, gain=1.0)
+            nn.init.zeros_(ffn_lin.bias)
+            self.ffn = nn.Sequential(ffn_lin)
+        else:
+            ffn_lin1 = nn.Linear(dim_hidden, dim_hidden)
+            ffn_lin2 = nn.Linear(dim_hidden, num_classes)
+            nn.init.xavier_uniform_(ffn_lin1.weight, gain=1.0)
+            nn.init.zeros_(ffn_lin1.bias)
+            nn.init.xavier_uniform_(ffn_lin2.weight, gain=0.5)
+            nn.init.zeros_(ffn_lin2.bias)
 
-        self.ffn = nn.Sequential(
-            ffn_lin1,
-            PolyActivation(),
-            nn.Dropout(p=0.5),
-            ffn_lin2,
-        )
+            self.ffn = nn.Sequential(
+                ffn_lin1,
+                PolyActivation(),
+                nn.Dropout(p=0.5),
+                ffn_lin2,
+            )
 
     def forward(self, *args, **kwargs) -> Tensor:
         x, edge_index, batch = self.arguments_read(*args, **kwargs)
@@ -306,7 +263,7 @@ class PolyGIN_3l(GNNBasic):
             post_conv = conv(post_conv, edge_index)
         return post_conv
     
-class GCN_3l(GNNBasic):
+class GCN(GNNBasic):
 
     def __init__(self, model_level, dim_node, dim_hidden, num_classes):
         super().__init__()
@@ -358,7 +315,7 @@ class GCN_3l(GNNBasic):
             post_conv = relu(conv(post_conv, edge_index))
         return post_conv
 
-class GCN_3l_BN(GCN_3l):
+class GCN_BN(GCN):
     def __init__(self, model_level, dim_node, dim_hidden, num_classes):
         super().__init__(model_level, dim_node, dim_hidden, num_classes)
         num_layer = 3
@@ -433,11 +390,11 @@ class GCN_2l(GNNBasic):
         return post_conv
 
 
-class GIN_3l(GNNBasic):
+class GIN(GNNBasic):
 
-    def __init__(self, model_level, dim_node, dim_hidden, num_classes):
+    def __init__(self, model_level, dim_node, dim_hidden, num_classes, use_fL=True):
         super().__init__()
-        num_layer = 3
+        num_layer = 4
 
         self.conv1 = GINConv(nn.Sequential(nn.Linear(dim_node, dim_hidden), nn.ReLU(),
                                            nn.Linear(dim_hidden, dim_hidden), nn.ReLU()))#,
@@ -462,10 +419,13 @@ class GIN_3l(GNNBasic):
         else:
             self.readout = GlobalMeanPool()
 
-        self.ffn = nn.Sequential(*(
-                [nn.Linear(dim_hidden, dim_hidden)] +
-                [nn.ReLU(), nn.Dropout(), nn.Linear(dim_hidden, num_classes)]
-        ))
+        if use_fL:
+            self.ffn = nn.Sequential(nn.Linear(dim_hidden, num_classes))
+        else:
+            self.ffn = nn.Sequential(*(
+                    [nn.Linear(dim_hidden, dim_hidden)] +
+                    [nn.ReLU(), nn.Dropout(), nn.Linear(dim_hidden, num_classes)]
+            ))
 
         self.dropout = nn.Dropout()
 
@@ -562,7 +522,6 @@ class GCNConv(gnn.GCNConv):
 
     def forward(self, x: Tensor, edge_index: Adj,
                 edge_weight: OptTensor = None) -> Tensor:
-        """"""
 
         if self.normalize and edge_weight is None:
             if isinstance(edge_index, Tensor):
@@ -812,7 +771,6 @@ class GCNConv_mask(gnn.GCNConv):
 
     def forward(self, x: Tensor, edge_index: Adj,
                 edge_weight: OptTensor = None) -> Tensor:
-        """"""
 
         if self.normalize and edge_weight is None:
             if isinstance(edge_index, Tensor):
@@ -837,12 +795,10 @@ class GCNConv_mask(gnn.GCNConv):
                 else:
                     edge_index = cache
 
-        # --- add require_grad ---
         edge_weight.requires_grad_(True)
 
         x = torch.matmul(x, self.weight)
 
-        # propagate_type: (x: Tensor, edge_weight: OptTensor)
         out = self.propagate(edge_index, x=x, edge_weight=edge_weight,
                              size=None)
 
@@ -912,12 +868,10 @@ class GINConv_mask(gnn.GINConv):
 
     def forward(self, x: Union[Tensor, OptPairTensor], edge_index: Adj,
                 edge_weight: OptTensor = None, task='explain', **kwargs) -> Tensor:
-        """"""
         self.num_nodes = x.shape[0]
         if isinstance(x, Tensor):
             x: OptPairTensor = (x, x)
 
-        # propagate_type: (x: OptPairTensor)
         if edge_weight is not None:
             self.edge_weight = edge_weight
             assert edge_weight.shape[0] == edge_index.shape[1]
@@ -939,10 +893,8 @@ class GINConv_mask(gnn.GINConv):
                     hooks.append(module.register_forward_hook(forward_hook))
 
             def forward_hook(module: nn.Module, input: Tuple[Tensor], output: Tensor):
-                # input contains x and edge_index
                 layer_extractor.append((module, input[0], output))
 
-            # --- register hooks ---
             self.nn.apply(register_hook)
 
             nn_out = self.nn(out)

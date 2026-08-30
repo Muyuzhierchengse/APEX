@@ -3,31 +3,15 @@ import numpy as np
 from torch_geometric.utils import add_self_loops
 
 
-class SimpsonIG:
-    def __init__(self, model, explain_graph=True, m_steps=51, baseline='zero'):
-        if m_steps < 3:
-            raise ValueError("m_steps must be >= 3 for Simpson's rule.")
-        if m_steps % 2 == 0:
-            import warnings
-            m_steps += 1
-            warnings.warn(
-                f"Simpson's rule requires an odd number of points. "
-                f"m_steps incremented to {m_steps}.",
-                UserWarning,
-            )
+class TrapezoidalIG:
+    def __init__(self, model, explain_graph=True, m_steps=50, baseline='zero'):
+        if m_steps < 2:
+            raise ValueError("m_steps must be >= 2 for the trapezoidal rule.")
         self.model             = model
         self.explain_graph     = explain_graph
         self.m_steps           = m_steps
         self.baseline_mode     = baseline
         self.last_node_scores  = None
-
-    @staticmethod
-    def _simpson_weights(m, device):
-        w = torch.ones(m, device=device)
-        w[1:-1:2] = 4.0
-        w[2:-2:2] = 2.0
-        w = w / (3.0 * (m - 1))
-        return w
 
     def __call__(self, x, edge_index,
                  sparsity=0, num_classes=2, node_idx=0, max_nodes=None):
@@ -44,7 +28,10 @@ class SimpsonIG:
 
         m       = self.m_steps
         alphas  = torch.linspace(0.0, 1.0, m, device=device)
-        weights = self._simpson_weights(m, device)
+        weights = torch.ones(m, device=device)
+        weights[0]  = 0.5
+        weights[-1] = 0.5
+        weights = weights / (m - 1)
 
         ig_node_idx = None if self.explain_graph else node_idx
 
