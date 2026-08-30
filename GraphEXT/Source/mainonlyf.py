@@ -6,6 +6,7 @@ import time
 import functools
 from collections import OrderedDict
 import numpy as np
+import random
 import torch
 from torch_geometric.loader import DataLoader
 from torch_geometric import __version__
@@ -21,15 +22,12 @@ torch.load = functools.partial(torch.load, weights_only=False)
 from model.models import *
 from dataset.data import *
 from method.flowx import FlowX
-from method.graphext import GraphEXT
 from method.gnnexplainer import GNNExplainer
 from method.gradcam import GradCAM
 from method.pgexplainer import PGExplainer
-from method.fsx import FSX
 from method.evaluation import (
     get_node_mask_from_edge_mask,
     eval_related_pred,
-    eval_related_pred_node,
 )
 from method.explainpoly import PolyGINExplainer
 from method.ig import IntegratedGradients
@@ -55,9 +53,8 @@ def set_seed(seed=0):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-
-# ── 图分类主逻辑 ─────────────────────────────────────────────────────────────
-
+# Explains every correctly-predicted test graph and logs fidelity/sparsity/time,
+# then writes the averaged results via _write_summary.
 def run_graph_classification(args, model, data, num_classes, device,
                               log_file, explainer):
     data_loader = DataLoader(data['test'], batch_size=1, shuffle=False)
@@ -128,111 +125,6 @@ def run_graph_classification(args, model, data, num_classes, device,
                    time_sum, args.sparsity)
 
 
-# ── 节点分类主逻辑 ───────────────────────────────────────────────────────────
-
-def run_node_classification(args, model, data, num_classes, device,
-                             log_file, explainer):
-    if isinstance(data, dict):
-        from torch_geometric.data import Batch
-        graph = Batch.from_data_list(list(data['test'])).to(device)
-    else:
-        graph = data.to(device)
-
-    num_nodes = graph.num_nodes
-
-    if hasattr(graph, 'test_mask') and graph.test_mask is not None:
-        target_nodes = graph.test_mask.nonzero(as_tuple=True)[0].tolist()
-    else:
-        target_nodes = list(range(num_nodes))
-
-    print(f'Node classification: {len(target_nodes)} test nodes, '
-          f'total nodes={num_nodes}')
-
-    with torch.no_grad():
-        batch = torch.zeros(num_nodes, dtype=torch.long, device=device)
-        out = model(graph.x, graph.edge_index, batch=batch)
-        all_logits = out[0] if isinstance(out, (tuple, list)) else out
-        all_pred   = all_logits.argmax(dim=-1)
-
-    fid_sum = fid_inv_sum = time_sum = 0.0
-    valid_count = 0
-
-    for index, node_idx in enumerate(target_nodes):
-        pred_cls  = all_pred[node_idx].item()
-        true_cls  = graph.y[node_idx].item()
-
-        if pred_cls != true_cls:
-            print(f'  Node {node_idx}: skipping (pred={pred_cls}, true={true_cls})')
-            continue
-
-        print(f'Explaining node #{node_idx}  '
-              f'[{index + 1}/{len(target_nodes)}]  cls={pred_cls}')
-
-        t_start = time.perf_counter()
-
-        result = explainer(
-            graph.x, graph.edge_index,
-            sparsity=0,
-            num_classes=num_classes,
-            node_idx=node_idx,
-            max_nodes=int(num_nodes * (1 - args.sparsity)),
-        )
-
-        if isinstance(result, tuple):
-            edge_masks, node_masks = result
-            raw_node_scores = explainer.last_node_scores
-        else:
-            edge_masks = result
-            node_masks = get_node_mask_from_edge_mask(
-                edge_masks, num_nodes, graph.edge_index,
-                num_classes, args.sparsity,
-            )
-            raw_node_scores = []
-            for cls in range(num_classes):
-                em  = edge_masks[cls].detach()
-                ns  = torch.zeros(num_nodes, device=device)
-                src, dst = graph.edge_index[0], graph.edge_index[1]
-                ns.scatter_add_(0, src, em)
-                ns.scatter_add_(0, dst, em)
-                deg  = torch.zeros(num_nodes, device=device)
-                ones = torch.ones(graph.edge_index.size(1), device=device)
-                deg.scatter_add_(0, src, ones)
-                deg.scatter_add_(0, dst, ones)
-                ns = ns / (deg + 1e-8)
-                raw_node_scores.append(ns)
-
-        r = eval_related_pred_node(
-            model, graph.x, graph.edge_index,
-            raw_node_scores,
-            pred_cls, node_idx, device,
-            sparsity=args.sparsity,
-            num_hops=3,
-        )
-        fid     = r['fid_plus']
-        fid_inv = r['fid_minus']
-
-        t_elapsed = time.perf_counter() - t_start
-
-        print(f"  Fidelity+      = {fid:.4f}")
-        print(f"  Fidelity-      = {fid_inv:.4f}")
-        print(f"  Sparsity       = {args.sparsity:.4f}")
-        print(f"  time           = {t_elapsed:.4f} s\n")
-
-        with open(log_file, 'a') as f:
-            f.write(f'node #{node_idx:d}  '
-                    f'(fid+={fid:.4f}, fid-={fid_inv:.4f}, '
-                    f'time={t_elapsed:.4f}s)\n')
-
-        fid_sum     += fid
-        fid_inv_sum += fid_inv
-        time_sum    += t_elapsed
-        valid_count += 1
-
-    _write_summary(log_file, valid_count, fid_sum, fid_inv_sum,
-                   time_sum, args.sparsity)
-
-
-# ── 公共 summary 输出 ────────────────────────────────────────────────────────
 
 def _write_summary(log_file, valid_count, fid_sum, fid_inv_sum,
                    time_sum, sparsity):
@@ -256,21 +148,17 @@ def _write_summary(log_file, valid_count, fid_sum, fid_inv_sum,
         f.write(summary)
 
 
-# ── 入口 ─────────────────────────────────────────────────────────────────────
-
 def main():
     set_seed(0)
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, default='BBBP',
-                        choices=['BBBP', 'ClinTox', 'Graph-SST2', 'Graph-Twitter',
-                                 'BA_2Motifs', 'BACE', 'Tox21', 'ToxCast',
-                                 'BA_shapes','ogbg-molhiv','ogbg-molpcba','ogbn-proteins'])
-    parser.add_argument('--model_used', type=str, default='GIN_3l',
-                        choices=['GCN_2l', 'GCN_3l', 'GIN_2l', 'GIN_3l', 'PolyGIN_3l'])
+                        choices=[ 'BBBP', 'Graph-SST2','BACE', 'Mutagenicity', 'BA_shapes'])
+    parser.add_argument('--model_used', type=str, default='GIN',
+                        choices=['GCN_2l', 'GCN', 'GIN_2l', 'GIN', 'PolyGIN'])
     parser.add_argument('--explainer', type=str, default='GradCAM',
-                        choices=['FlowX', 'GNNExplainer', 'GraphEXT',
-                                 'PGExplainer', 'GradCAM', 'FSX', 'PolyGINExplainer',
-                                 'IntegratedGradients', 'TrapezoidalIG', 'SimpsonIG'])
+                        choices=['FlowX', 'GNNExplainer', 
+                                 'PGExplainer', 'GradCAM', 'PolyGINExplainer',
+                                 'IntegratedGradients','TrapezoidalIG', 'SimpsonIG'])
     parser.add_argument('--sparsity',      type=float, default=0.5)
     parser.add_argument('--dim_hidden',    type=int,   default=300)
     args = parser.parse_args()
@@ -329,13 +217,10 @@ def main():
     else:
         explainer = eval(args.explainer)(model, explain_graph=explain_graph)
 
-    if is_node_cls:
-        run_node_classification(args, model, data, num_classes, device,
+    run_graph_classification(args, model, data, num_classes, device,
                                 log_file, explainer)
-    else:
-        run_graph_classification(args, model, data, num_classes, device,
-                                 log_file, explainer)
 
 
 if __name__ == '__main__':
     main()
+    

@@ -44,7 +44,6 @@ class GradCAM(WalkBase):
             edge_index, num_nodes=self.num_nodes
         )
 
-        # ── 节点分类分支 ──────────────────────────────────────────────────────
         if not self.explain_graph:
             node_idx = kwargs.get('node_idx')
             if isinstance(node_idx, int):
@@ -60,8 +59,6 @@ class GradCAM(WalkBase):
             )
             self.new_node_idx = torch.where(self.subset == node_idx)[0]
 
-            # model_node 在全图上前向，只取目标节点的输出
-            # additional_forward_args 传全图 edge_index
             class model_node(nn.Module):
                 def __init__(self, cls):
                     super().__init__()
@@ -80,21 +77,15 @@ class GradCAM(WalkBase):
             raw_node_scores = []
 
             for ex_label in ex_labels:
-                # attr shape: [num_nodes, 1] 或 [num_nodes]
-                # 因为 model_node 在全图 x 上运行，GradCAM 对全图所有节点求梯度
                 attr = self.explain_method.attribute(
                     x, ex_label, additional_forward_args=edge_index
                 ).detach()
 
-                # ── 归一化：得到全图节点分数 [num_nodes] ────────────────────
-                node_scores = normalize(attr.relu()).squeeze()  # [num_nodes]
+                node_scores = normalize(attr.relu()).squeeze()
 
                 if node_scores.dim() == 0:
-                    # 极端情况：标量，扩展为全图大小
                     node_scores = node_scores.unsqueeze(0).expand(num_nodes)
                 elif node_scores.shape[0] != num_nodes:
-                    # attr 输出与全图节点数不符时，用零向量兜底
-                    # （正常情况不应进入此分支）
                     scores_raw = node_scores
                     node_scores = torch.zeros(num_nodes, device=x.device)
                     copy_len = min(scores_raw.shape[0], num_nodes)
@@ -102,7 +93,6 @@ class GradCAM(WalkBase):
 
                 raw_node_scores.append(node_scores)
 
-                # ── edge_mask：在全图 self_loop_edge_index 上聚合 ────────────
                 edge_score = (
                     node_scores[self_loop_edge_index[0]] +
                     node_scores[self_loop_edge_index[1]]
@@ -110,7 +100,6 @@ class GradCAM(WalkBase):
                 n_orig = edge_index.shape[1]
                 edge_masks.append(edge_score[:n_orig].detach())
 
-                # ── node_mask：全图 top-k ────────────────────────────────────
                 max_nodes = kwargs.get('max_nodes', max(1, int(num_nodes * 0.5)))
                 k = min(max_nodes, num_nodes)
                 topk_indices = node_scores.topk(k).indices
@@ -121,7 +110,6 @@ class GradCAM(WalkBase):
             self.last_node_scores = raw_node_scores
             return edge_masks, node_masks_list
 
-        # ── 图分类分支（完全不动）────────────────────────────────────────────
         else:
             model = self.model
             self.explain_method = GraphLayerGradCam(model, model.convs[-1])

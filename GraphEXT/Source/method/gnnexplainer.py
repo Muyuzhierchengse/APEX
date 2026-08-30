@@ -31,7 +31,7 @@ class GNNExplainer(ExplainerBase):
         self.coff_edge_size = coff_edge_size
         self.coff_edge_ent = coff_edge_ent
         self._symmetric_edge_mask_indirect_graph: bool = indirect_graph_symmetric_weights
-        self.last_node_scores = None   # 新增：节点分类时存储节点分数
+        self.last_node_scores = None
 
     def __loss__(self, raw_preds: Tensor, x_label: Union[Tensor, int]):
         if self.explain_graph:
@@ -86,7 +86,6 @@ class GNNExplainer(ExplainerBase):
 
         self_loop_edge_index, _ = add_remaining_self_loops(edge_index, num_nodes=self.num_nodes)
 
-        # ── 图分类分支（完全不动）────────────────────────────────────────────
         if self.explain_graph:
             labels    = tuple(i for i in range(kwargs.get('num_classes')))
             ex_labels = tuple(torch.tensor([label]).to(self.device) for label in labels)
@@ -110,7 +109,6 @@ class GNNExplainer(ExplainerBase):
             self.__clear_masks__()
             return edge_masks
 
-        # ── 节点分类分支 ──────────────────────────────────────────────────────
         else:
             self.node_idx = node_idx = kwargs.get('node_idx')
             assert node_idx is not None
@@ -140,7 +138,6 @@ class GNNExplainer(ExplainerBase):
                 torch.tensor([label]).to(self.device) for label in labels
             )
 
-            # max_nodes 控制 node_mask top-k
             max_nodes = kwargs.get('max_nodes', None)
             sparsity  = kwargs.get('sparsity', 0.5)
             if max_nodes is not None:
@@ -148,7 +145,6 @@ class GNNExplainer(ExplainerBase):
             else:
                 num_keep = max(1, int(num_nodes * (1 - sparsity)))
 
-            # 目标节点的直接邻居（含自身），用于限定 node_mask 范围
             s_cpu = edge_index[0].cpu()
             d_cpu = edge_index[1].cpu()
             node_idx_scalar = node_idx[0].item() if node_idx.numel() > 1 else node_idx.item()
@@ -175,15 +171,13 @@ class GNNExplainer(ExplainerBase):
                     self.__set_masks__(x, self_loop_edge_index)
                     edge_mask_full = self.gnn_explainer_alg(
                         x, self_loop_edge_index, ex_label
-                    ).sigmoid()   # shape: [E_self_loop]
+                    ).sigmoid()
 
                     if self._symmetric_edge_mask_indirect_graph:
                         edge_mask_full = symmetric_edge_mask_indirect_graph(
                             self_loop_edge_index, edge_mask_full
                         )
 
-                    # ── 从 self_loop edge_mask 聚合出全图节点分数 ────────────
-                    # 每个节点的分数 = 所有关联边掩码的均值
                     ns  = torch.zeros(num_nodes, device=x.device)
                     deg = torch.zeros(num_nodes, device=x.device)
                     src_sl, dst_sl = self_loop_edge_index[0], self_loop_edge_index[1]
@@ -192,14 +186,12 @@ class GNNExplainer(ExplainerBase):
                     ns.scatter_add_(0, dst_sl, edge_mask_full)
                     deg.scatter_add_(0, src_sl, ones)
                     deg.scatter_add_(0, dst_sl, ones)
-                    node_scores = ns / (deg + EPS)   # [N]，全图节点分数
+                    node_scores = ns / (deg + EPS)
                     raw_node_scores.append(node_scores)
 
-                    # ── edge_mask：截取原始边（去掉自环补充部分）────────────
                     n_orig = edge_index.shape[1]
                     edge_masks.append(edge_mask_full[:n_orig].detach())
 
-                    # ── node_mask：在直接邻居范围内选 top-k ─────────────────
                     scores_sub  = node_scores[neighbor_tensor]
                     k_sub       = min(num_keep, len(neighbors))
                     topk_local  = scores_sub.topk(k_sub).indices
@@ -211,7 +203,6 @@ class GNNExplainer(ExplainerBase):
 
             self.__clear_masks__()
 
-            # last_node_scores 供 Efficiency Gap 使用
             self.last_node_scores = raw_node_scores
 
             return edge_masks, node_masks_list

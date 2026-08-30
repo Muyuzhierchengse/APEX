@@ -1,8 +1,3 @@
-"""
-Description: The implement of PGExplainer model
-<https://arxiv.org/abs/2011.04573>
-"""
-
 import tqdm
 import time
 import torch
@@ -30,28 +25,6 @@ EPS = 1e-6
 def k_hop_subgraph_with_default_whole_graph(
         edge_index, node_idx=None, num_hops=3, relabel_nodes=False,
         num_nodes=None, flow='source_to_target'):
-    r"""Computes the :math:`k`-hop subgraph of :obj:`edge_index` around node
-    :attr:`node_idx`.
-    It returns (1) the nodes involved in the subgraph, (2) the filtered
-    :obj:`edge_index` connectivity, (3) the mapping from node indices in
-    :obj:`node_idx` to their new location, and (4) the edge mask indicating
-    which edges were preserved.
-    Args:
-        node_idx (int, list, tuple or :obj:`torch.Tensor`): The central
-            node(s).
-        num_hops: (int): The number of hops :math:`k`.
-        edge_index (LongTensor): The edge indices.
-        relabel_nodes (bool, optional): If set to :obj:`True`, the resulting
-            :obj:`edge_index` will be relabeled to hold consecutive indices
-            starting from zero. (default: :obj:`False`)
-        num_nodes (int, optional): The number of nodes, *i.e.*
-            :obj:`max_val + 1` of :attr:`edge_index`. (default: :obj:`None`)
-        flow (string, optional): The flow direction of :math:`k`-hop
-            aggregation (:obj:`"source_to_target"` or
-            :obj:`"target_to_source"`). (default: :obj:`"source_to_target"`)
-    :rtype: (:class:`LongTensor`, :class:`LongTensor`, :class:`LongTensor`,
-             :class:`BoolTensor`)
-    """
 
     num_nodes = maybe_num_nodes(edge_index, num_nodes)
 
@@ -59,7 +32,7 @@ def k_hop_subgraph_with_default_whole_graph(
     if flow == 'target_to_source':
         row, col = edge_index
     else:
-        col, row = edge_index  # edge_index 0 to 1, col: source, row: target
+        col, row = edge_index
 
     node_mask = row.new_empty(num_nodes, dtype=torch.bool)
     edge_mask = row.new_empty(row.size(0), dtype=torch.bool)
@@ -107,7 +80,7 @@ def k_hop_subgraph_with_default_whole_graph(
         node_idx[subset] = torch.arange(subset.size(0), device=row.device)
         edge_index = node_idx[edge_index]
 
-    return subset, edge_index, inv, edge_mask  # subset: key new node idx; value original node idx
+    return subset, edge_index, inv, edge_mask
 
 
 def calculate_selected_nodes(data, edge_mask, top_k):
@@ -169,7 +142,7 @@ class PlotUtils(object):
             edgelist = [(n_frm, n_to) for (n_frm, n_to) in graph.edges() if
                                   n_frm in nodelist and n_to in nodelist]
 
-        pos = nx.kamada_kawai_layout(graph) # calculate according to graph.nodes()
+        pos = nx.kamada_kawai_layout(graph)
         pos_nodelist = {k: v for k, v in pos.items() if k in nodelist}
 
         nx.draw_networkx_nodes(graph, pos,
@@ -224,7 +197,6 @@ class PlotUtils(object):
                       edgelist=None,
                       title_sentence=None,
                       figname=None):
-        # collect the text information and node color
         if self.dataset_name == 'mutag':
             node_dict = {0: 'C', 1: 'N', 2: 'O', 3: 'F', 4: 'I', 5: 'Cl', 6: 'Br'}
             node_idxs = {k: int(v) for k, v in enumerate(np.where(x.cpu().numpy() == 1)[1])}
@@ -361,28 +333,6 @@ class PlotUtils(object):
 
 
 class PGExplainer(nn.Module):
-    r"""
-    An implementation of PGExplainer in
-    `Parameterized Explainer for Graph Neural Network <https://arxiv.org/abs/2011.04573>`_.
-
-    Args:
-        model (:class:`torch.nn.Module`): The target model prepared to explain
-        in_channels (:obj:`int`): Number of input channels for the explanation network
-        explain_graph (:obj:`bool`): Whether to explain graph classification model (default: :obj:`True`)
-        epochs (:obj:`int`): Number of epochs to train the explanation network
-        lr (:obj:`float`): Learning rate to train the explanation network
-        coff_size (:obj:`float`): Size regularization to constrain the explanation size
-        coff_ent (:obj:`float`): Entropy regularization to constrain the connectivity of explanation
-        t0 (:obj:`float`): The temperature at the first epoch
-        t1(:obj:`float`): The temperature at the final epoch
-        num_hops (:obj:`int`, :obj:`None`): The number of hops to extract neighborhood of target node
-        (default: :obj:`None`)
-
-    .. note: For node classification model, the :attr:`explain_graph` flag is False.
-      If :attr:`num_hops` is set to :obj:`None`, it will be automatically calculated by calculating the
-      :class:`torch_geometric.nn.MessagePassing` layers in the :attr:`model`.
-
-    """
     def __init__(self, model, in_channels: int, device, explain_graph: bool = True, epochs: int = 5,
                  lr: float = 0.00001, coff_size: float = 0.001, coff_ent: float = 5e-6,
                  t0: float = 5.0, t1: float = 1.0, sample_bias: float = 0.0, num_hops: Optional[int] = None):
@@ -393,7 +343,6 @@ class PGExplainer(nn.Module):
         self.in_channels = in_channels
         self.explain_graph = explain_graph
 
-        # training parameters for PGExplainer
         self.epochs = epochs
         self.lr = lr
         self.coff_size = coff_size
@@ -405,31 +354,12 @@ class PGExplainer(nn.Module):
         self.num_hops = self.update_num_hops(num_hops)
         self.init_bias = 0.0
 
-        # Explanation model in PGExplainer
         self.elayers = nn.ModuleList()
         self.elayers.append(nn.Sequential(nn.Linear(in_channels, 64), nn.ReLU()))
         self.elayers.append(nn.Linear(64, 1))
         self.elayers.to(self.device)
 
     def __set_masks__(self, x: Tensor, edge_index: Tensor, edge_mask: Tensor = None):
-        r""" Set the edge weights before message passing
-
-        Args:
-            x (:obj:`torch.Tensor`): Node feature matrix with shape
-              :obj:`[num_nodes, dim_node_feature]`
-            edge_index (:obj:`torch.Tensor`): Graph connectivity in COO format
-              with shape :obj:`[2, num_edges]`
-            edge_mask (:obj:`torch.Tensor`): Edge weight matrix before message passing
-              (default: :obj:`None`)
-
-        The :attr:`edge_mask` will be randomly initialized when set to :obj:`None`.
-
-        .. note:: When you use the :meth:`~PGExplainer.__set_masks__`,
-          the explain flag for all the :class:`torch_geometric.nn.MessagePassing`
-          modules in :attr:`model` will be assigned with :obj:`True`. In addition,
-          the :attr:`edge_mask` will be assigned to all the modules.
-          Please take :meth:`~PGExplainer.__clear_masks__` to reset.
-        """
         (N, F), E = x.size(), edge_index.size(1)
         std = 0.1
         init_bias = self.init_bias
@@ -447,7 +377,6 @@ class PGExplainer(nn.Module):
                 module.__edge_mask__ = self.edge_mask
 
     def __clear_masks__(self):
-        """ clear the edge weights to None, and set the explain flag to :obj:`False` """
         for module in self.model.modules():
             if isinstance(module, MessagePassing):
                 module._explain = False
@@ -474,16 +403,13 @@ class PGExplainer(nn.Module):
         logit = prob[ori_pred]
         logit = torch.clamp(logit, min=EPS, max=1.0-EPS)
         pred_loss = -torch.log(logit + EPS)
-        
-        # 检查pred_loss是否有效
+
         if torch.isnan(pred_loss) or torch.isinf(pred_loss):
             print(f"Warning: pred_loss is NaN or Inf, prob[{ori_pred}]={prob[ori_pred]}")
             pred_loss = torch.tensor(0.0, device=prob.device)
 
-        # size
         edge_mask = self.sparse_mask_values
-        
-        # 详细检查edge_mask
+
         if edge_mask is None:
             print("Error: edge_mask is None!")
             edge_mask = torch.ones(1, device=prob.device) * 0.5
@@ -494,26 +420,13 @@ class PGExplainer(nn.Module):
                 f"NaN count: {torch.isnan(edge_mask).sum()}, Inf count: {torch.isinf(edge_mask).sum()}")
             edge_mask = torch.nan_to_num(edge_mask, nan=0.5, posinf=1.0-EPS, neginf=EPS)
             self.sparse_mask_values = edge_mask
-        
-        # 确保edge_mask在有效范围
+
         edge_mask = torch.clamp(edge_mask, min=EPS, max=1.0-EPS)
-        
+
         size_loss = self.coff_size * torch.sum(edge_mask)
 
-        # entropy - 完全重写，使用更稳定的实现
-        # 使用二值交叉熵的稳定版本
-        # H = -p*log(p) - (1-p)*log(1-p)
-        
-        # 方法1：直接使用PyTorch的binary_cross_entropy
-        # 但我们需要自己实现熵，因为BCE需要target
-        
-        # 方法2：使用数值稳定的log
-        # 避免直接计算log(0)的情况
         p = edge_mask
-        
-        # 使用torch.where来避免log(0)
-        # 当p接近0时，-p*log(p)趋向于0
-        # 当p接近1时，-(1-p)*log(1-p)趋向于0
+
         term1 = torch.where(
             p > EPS,
             -p * torch.log(p),
@@ -527,8 +440,7 @@ class PGExplainer(nn.Module):
         )
         
         mask_ent = term1 + term2
-        
-        # 检查mask_ent的每个组成部分
+
         if torch.isnan(term1).any():
             print(f"Warning: term1 has NaN. p stats - min: {p.min()}, max: {p.max()}, mean: {p.mean()}")
             term1 = torch.nan_to_num(term1, nan=0.0)
@@ -540,14 +452,12 @@ class PGExplainer(nn.Module):
         if torch.isnan(mask_ent).any() or torch.isinf(mask_ent).any():
             print(f"Warning: mask_ent has NaN/Inf after computation. Setting invalid values to 0")
             mask_ent = torch.nan_to_num(mask_ent, nan=0.0, posinf=0.0, neginf=0.0)
-        
-        # 使用sum而不是mean，避免除以0的情况
+
         if mask_ent.numel() > 0:
             mask_ent_loss = self.coff_ent * torch.sum(mask_ent) / max(mask_ent.numel(), 1)
         else:
             mask_ent_loss = torch.tensor(0.0, device=prob.device)
-        
-        # 最终检查mask_ent_loss
+
         if torch.isnan(mask_ent_loss) or torch.isinf(mask_ent_loss):
             print(f"Warning: mask_ent_loss is NaN or Inf, setting to 0")
             print(f"  mask_ent stats - min: {mask_ent.min()}, max: {mask_ent.max()}, mean: {mask_ent.mean()}")
@@ -555,8 +465,7 @@ class PGExplainer(nn.Module):
             mask_ent_loss = torch.tensor(0.0, device=prob.device)
 
         loss = pred_loss + size_loss + mask_ent_loss
-        
-        # 最终检查
+
         if torch.isnan(loss) or torch.isinf(loss):
             print(f"Warning: Final loss is NaN or Inf. pred_loss={pred_loss}, size_loss={size_loss}, mask_ent_loss={mask_ent_loss}")
             loss = torch.tensor(0.0, device=prob.device, requires_grad=True)
@@ -570,22 +479,6 @@ class PGExplainer(nn.Module):
                      y: Optional[Tensor] = None,
                      **kwargs)\
             -> Tuple[Tensor, Tensor, Tensor, List, Dict]:
-        r""" extract the subgraph of target node
-
-        Args:
-            node_idx (:obj:`int`): The node index
-            x (:obj:`torch.Tensor`): Node feature matrix with shape
-              :obj:`[num_nodes, dim_node_feature]`
-            edge_index (:obj:`torch.Tensor`): Graph connectivity in COO format
-              with shape :obj:`[2, num_edges]`
-            y (:obj:`torch.Tensor`, :obj:`None`): Node label matrix with shape :obj:`[num_nodes]`
-              (default :obj:`None`)
-            kwargs(:obj:`Dict`, :obj:`None`): Additional parameters
-
-        :rtype: (:class:`torch.Tensor`, :class:`torch.Tensor`, :class:`torch.Tensor`,
-          :obj:`List`, :class:`Dict`)
-
-        """
         num_nodes, num_edges = x.size(0), edge_index.size(1)
         graph = to_networkx(data=Data(x=x, edge_index=edge_index), to_undirected=True)
 
@@ -609,7 +502,6 @@ class PGExplainer(nn.Module):
         return x, edge_index, y, subset, kwargs
 
     def concrete_sample(self, log_alpha: Tensor, beta: float = 1.0, training: bool = True):
-        r""" Sample from the instantiation of concrete distribution when training """
         if training:
             bias = self.sample_bias
             random_noise = torch.rand(log_alpha.shape, device=log_alpha.device)
@@ -620,15 +512,13 @@ class PGExplainer(nn.Module):
             gate_inputs = gate_inputs.sigmoid()
         else:
             gate_inputs = log_alpha.sigmoid()
-        
-        # 添加检查
+
         if torch.isnan(gate_inputs).any() or torch.isinf(gate_inputs).any():
             print("Warning: gate_inputs has NaN/Inf in concrete_sample")
             gate_inputs = torch.nan_to_num(gate_inputs, nan=0.5, posinf=1.0-EPS, neginf=EPS)
-        
-        # 确保输出在有效范围内
+
         gate_inputs = torch.clamp(gate_inputs, min=EPS, max=1.0-EPS)
-        
+
         return gate_inputs
     def explain(self,
                 x: Tensor,
@@ -638,19 +528,15 @@ class PGExplainer(nn.Module):
                 training: bool = False,
                 **kwargs)\
             -> Tuple[float, Tensor]:
-        r""" explain the GNN behavior for graph with explanation network """
         node_idx = kwargs.get('node_idx')
         nodesize = embed.shape[0]
-        
-        # 确保embed在正确的设备上并进行数值稳定化
+
         embed = embed.to(self.device)
-        
-        # 检查embed是否包含NaN或Inf
+
         if torch.isnan(embed).any() or torch.isinf(embed).any():
             print("Warning: embed contains NaN or Inf, replacing with zeros")
             embed = torch.nan_to_num(embed, nan=0.0, posinf=1.0, neginf=-1.0)
-        
-        # 归一化embed以防止数值溢出
+
         embed = torch.clamp(embed, min=-10, max=10)
         
         if self.explain_graph:
@@ -665,22 +551,18 @@ class PGExplainer(nn.Module):
             self_embed = embed[node_idx].repeat(f1.shape[0], 1)
             f12self = torch.cat([f1, f2, self_embed], dim=-1)
 
-        # using the node embedding to calculate the edge weight
         h = f12self.to(self.device)
         for elayer in self.elayers:
             h = elayer(h)
-            # 在每层后进行数值检查和稳定化
             if torch.isnan(h).any() or torch.isinf(h).any():
                 h = torch.nan_to_num(h, nan=0.0, posinf=1.0, neginf=-1.0)
             h = torch.clamp(h, min=-10, max=10)
-        
+
         values = h.reshape(-1)
         values = self.concrete_sample(values, beta=tmp, training=training)
-        
-        # 强制将values限制在(0, 1)范围内，避免边界值
+
         values = torch.clamp(values, min=EPS, max=1.0-EPS)
-        
-        # 检查values是否有效
+
         if torch.isnan(values).any() or torch.isinf(values).any():
             print("Warning: values contains NaN or Inf after concrete_sample")
             values = torch.nan_to_num(values, nan=0.5, posinf=1.0-EPS, neginf=EPS)
@@ -691,18 +573,14 @@ class PGExplainer(nn.Module):
             edge_index, values, (nodesize, nodesize)
         ).to(self.device)
         mask_sigmoid = mask_sparse.to_dense()
-        # set the symmetric edge weights
         sym_mask = (mask_sigmoid + mask_sigmoid.transpose(0, 1)) / 2
         edge_mask = sym_mask[edge_index[0], edge_index[1]]
-        
-        # 再次确保edge_mask在有效范围内
+
         edge_mask = torch.clamp(edge_mask, min=EPS, max=1.0-EPS)
 
-        # inverse the weights before sigmoid in MessagePassing Module
         self.__clear_masks__()
         self.__set_masks__(x, edge_index, edge_mask)
 
-        # the model prediction with edge mask
         logits = self.model(x, edge_index)
         probs = F.softmax(logits, dim=-1)
 
@@ -710,7 +588,6 @@ class PGExplainer(nn.Module):
         return probs, edge_mask
 
     def train_explanation_network(self, dataset):
-        r""" training the explanation network by gradient descent(GD) using Adam optimizer """
         optimizer = Adam(self.elayers.parameters(), lr=self.lr)
         if self.explain_graph:
             with torch.no_grad():
@@ -725,7 +602,6 @@ class PGExplainer(nn.Module):
                     emb_dict[gid] = emb.data.cpu()
                     ori_pred_dict[gid] = logits.argmax(-1).data.cpu()
 
-            # train the mask generator
             duration = 0.0
             for epoch in range(self.epochs):
                 loss = 0.0
@@ -761,15 +637,10 @@ class PGExplainer(nn.Module):
                 duration += time.perf_counter() - tic
                 print(f'Epoch: {epoch} | Loss: {loss}')
 
-        # ── 节点分类分支 ──────────────────────────────────────────────────────
         else:
-            # dataset 可能是单张 Data 对象（节点分类场景，如 BA_shapes）
-            # 也可能是支持下标的数据集对象，统一处理
             if hasattr(dataset, 'x'):
-                # 单张 Data 对象，直接使用
                 data = dataset.to(self.device)
             else:
-                # 列表/数据集对象，取第一张图
                 data = dataset[0].to(self.device)
 
             with torch.no_grad():
@@ -780,7 +651,6 @@ class PGExplainer(nn.Module):
                 for node_idx in tqdm.tqdm(explain_node_index_list):
                     pred_dict[node_idx] = logits[node_idx].argmax(-1).item()
 
-            # train the mask generator
             duration = 0.0
             for epoch in range(self.epochs):
                 loss = 0.0
@@ -833,7 +703,6 @@ class PGExplainer(nn.Module):
         pred_labels = probs.argmax(dim=-1)
         embed = self.model.get_emb(x, edge_index)
 
-        # ── 图分类分支（完全不动）────────────────────────────────────────────
         if self.explain_graph:
             probs = probs.squeeze()
             label = pred_labels
@@ -863,7 +732,6 @@ class PGExplainer(nn.Module):
                 'sparsity': sparsity_score}]
             return None, pred_mask, related_preds
 
-        # ── 节点分类分支 ──────────────────────────────────────────────────────
         else:
             node_idx = kwargs.get('node_idx')
             assert node_idx is not None, "please input the node_idx"
@@ -878,38 +746,27 @@ class PGExplainer(nn.Module):
             else:
                 num_keep = max(1, int(num_nodes * (1 - sparsity_val)))
 
-            # ── 1. 提取 k-hop 子图（用于 explain 网络推理）────────────────
             x_sub, edge_index_sub, _, subset, _ = self.get_subgraph(
                 node_idx, x, edge_index
             )
             new_node_idx = torch.where(subset == node_idx)[0]
             embed_sub = self.model.get_emb(x_sub, edge_index_sub)
 
-            # ── 2. 在子图上运行 explain，得到子图边掩码 ───────────────────
             _, edge_mask_sub = self.explain(
                 x_sub, edge_index_sub, embed_sub,
                 tmp=1.0, training=False, node_idx=new_node_idx
             )
-            # edge_mask_sub shape: [E_sub]，对应 edge_index_sub 的边
 
-            # ── 3. 将子图边掩码映射回全图 ─────────────────────────────────
-            # subset 记录子图节点在全图中的原始编号（relabel_nodes=True 时已重标签）
-            # edge_index_sub 是重标签后的子图边，需要用 subset 还原全图节点编号
-            # 先找全图 edge_index 中哪些边属于子图内部
             subset_set = set(subset.cpu().tolist())
 
-            # 全图节点编号 → 子图节点编号的映射
             global_to_sub = {int(subset[i]): i for i in range(len(subset))}
 
-            # 构建子图边（全图编号）→ 掩码值 的查找表
-            # edge_index_sub 是子图内重标签编号，转回全图编号
             sub_src_global = subset[edge_index_sub[0]].cpu().tolist()
             sub_dst_global = subset[edge_index_sub[1]].cpu().tolist()
             sub_edge_dict = {}
             for i, (u, v) in enumerate(zip(sub_src_global, sub_dst_global)):
                 sub_edge_dict[(u, v)] = edge_mask_sub[i].item()
 
-            # 全图 edge_mask：子图内的边取对应掩码值，子图外的边取 0
             edge_mask_full = torch.zeros(num_edges, device=self.device)
             ei_cpu = edge_index.cpu()
             for i in range(num_edges):
@@ -918,14 +775,11 @@ class PGExplainer(nn.Module):
                 if (u, v) in sub_edge_dict:
                     edge_mask_full[i] = sub_edge_dict[(u, v)]
                 elif (v, u) in sub_edge_dict:
-                    # 无向图：若只存了一个方向，也匹配
                     edge_mask_full[i] = sub_edge_dict[(v, u)]
 
-            # ── 4. 从全图 edge_mask 聚合出全图节点分数 ───────────────────
             raw_node_scores = []
             node_masks_list = []
 
-            # 目标节点的直接邻居（含自身），用于限定 node_mask 范围
             s_cpu = edge_index[0].cpu()
             d_cpu = edge_index[1].cpu()
             node_idx_scalar = int(node_idx) if isinstance(node_idx, int) \
@@ -944,8 +798,6 @@ class PGExplainer(nn.Module):
             )
 
             for cls in range(num_classes):
-                # 所有类别共享同一套子图掩码（PGExplainer 只训练一个掩码网络）
-                # node_scores：通过边掩码聚合
                 ns  = torch.zeros(num_nodes, device=self.device)
                 deg = torch.zeros(num_nodes, device=self.device)
                 src_g = edge_index[0]
@@ -955,10 +807,9 @@ class PGExplainer(nn.Module):
                 ns.scatter_add_(0, dst_g, edge_mask_full)
                 deg.scatter_add_(0, src_g, ones)
                 deg.scatter_add_(0, dst_g, ones)
-                node_scores = ns / (deg + EPS)   # [N]
+                node_scores = ns / (deg + EPS)
                 raw_node_scores.append(node_scores)
 
-                # node_mask：在直接邻居范围内选 top-k
                 scores_sub_nb = node_scores[neighbor_tensor]
                 k_sub         = min(num_keep, len(neighbors))
                 topk_local    = scores_sub_nb.topk(k_sub).indices
@@ -968,10 +819,8 @@ class PGExplainer(nn.Module):
                 nm[topk_global] = 1.0
                 node_masks_list.append(nm)
 
-            # ── 5. 挂载供 main.py 使用的属性 ─────────────────────────────
             self.last_node_scores = raw_node_scores
 
-            # 返回与图分类一致的格式：(edge_masks, node_masks)
             edge_masks = [edge_mask_full for _ in range(num_classes)]
             return edge_masks, node_masks_list
 

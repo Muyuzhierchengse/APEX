@@ -1,20 +1,14 @@
-"""
-method/ig.py
-============
-Integrated Gradients (IG) for GNN explanation.
-支持图分类（explain_graph=True）和节点分类（explain_graph=False）。
-"""
-
 import torch
 import numpy as np
 
 
 class IntegratedGradients:
-    def __init__(self, model, explain_graph=True, m_steps=50, baseline='zero'):
+    def __init__(self, model, explain_graph=True, m_steps=50, baseline='zero', isabs=False):
         self.model         = model
         self.explain_graph = explain_graph
         self.m_steps       = m_steps
         self.baseline_type = baseline
+        self.isabs         = isabs
         self.last_node_scores = None
 
     def _get_baseline(self, x):
@@ -32,10 +26,8 @@ class IntegratedGradients:
         logits = out[0] if isinstance(out, (tuple, list)) else out
 
         if node_idx is None:
-            # 图分类：logits 形状 [C]
-            scalar = logits[pred_cls]
+            scalar = logits[0, pred_cls]
         else:
-            # 节点分类：logits 形状 [N, C]
             scalar = logits[node_idx, pred_cls]
 
         self.model.zero_grad()
@@ -60,7 +52,7 @@ class IntegratedGradients:
             grad_sum = grad_sum + grad
 
         avg_grad    = grad_sum / m
-        attribution = (x - baseline) * avg_grad   # [N, D]
+        attribution = (x - baseline) * avg_grad
 
         return attribution
 
@@ -99,19 +91,17 @@ class IntegratedGradients:
                 x, edge_index, baseline, cls, batch,
                 node_idx=ig_node_idx,
             )
-            # attribution: [N, D]
 
-            signed_scores = attribution.sum(dim=-1)        # [N]
-            abs_scores    = attribution.abs().sum(dim=-1)  # [N]
+            signed_scores = attribution.sum(dim=-1)
+            abs_scores    = attribution.abs().sum(dim=-1)
+            select_scores = abs_scores if self.isabs else signed_scores
 
             signed_scores_list.append(signed_scores)
             abs_scores_list.append(abs_scores)
 
             edge_masks.append(torch.zeros(num_edges, device=device))
 
-            # ── 节点分类：只在目标节点的直接邻居+自身中选 top-k ──────────
             if not self.explain_graph:
-                # 找 node_idx 的直接邻居（含自身）
                 s_cpu = edge_index[0].cpu()
                 d_cpu = edge_index[1].cpu()
                 neighbors = set()
@@ -125,18 +115,16 @@ class IntegratedGradients:
                 neighbors = sorted(neighbors)
                 neighbor_tensor = torch.tensor(neighbors, dtype=torch.long, device=device)
 
-                # 在邻居子集内按 abs_scores 选 top-k
-                scores_sub = abs_scores[neighbor_tensor]
+                scores_sub = select_scores[neighbor_tensor]
                 k_sub      = min(num_keep, len(neighbors))
                 topk_local = scores_sub.topk(k_sub).indices
                 topk_global = neighbor_tensor[topk_local]
 
                 nm = torch.zeros(num_nodes, dtype=torch.float32, device=device)
                 nm[topk_global] = 1.0
-            # ── 图分类：全图 top-k（原逻辑不变）────────────────────────────
             else:
                 k    = min(num_keep, num_nodes)
-                topk = abs_scores.topk(k).indices
+                topk = select_scores.topk(k).indices
                 nm   = torch.zeros(num_nodes, dtype=torch.float32, device=device)
                 nm[topk] = 1.0
 
