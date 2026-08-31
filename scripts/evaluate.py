@@ -31,6 +31,7 @@ from apex.explainers.integrated_gradients import IntegratedGradients
 from apex.explainers.gauss_legendre_ig import GaussLegendreIG
 from apex.explainers.adaptive_riemann_ig import RiemannOptIG
 from apex.utils.checkpoints import compatible_state_dict
+from apex.utils.paths import CHECKPOINT_DIR, DATA_DIR, LOG_DIR
 from apex.utils.reproducibility import set_seed
 
 
@@ -68,11 +69,11 @@ def main():
     parser.add_argument('--perturb_ratio', type=float, default=0.1)
     args = parser.parse_args()
 
-    data_path       = './dataset'
-    checkpoint_path = './model/checkpoint'
+    data_path       = str(DATA_DIR)
+    checkpoint_path = str(CHECKPOINT_DIR)
     model_save_path = osp.join(checkpoint_path, args.dataset,
                                args.model_used + f'_seed0.pkl')
-    log_path = osp.join('log', args.dataset, args.explainer, args.model_used)
+    log_path = osp.join(str(LOG_DIR), args.dataset, args.explainer, args.model_used)
     os.makedirs(log_path, exist_ok=True)
     log_file = osp.join(log_path, f'Sparsity={args.sparsity}.log')
 

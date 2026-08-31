@@ -21,9 +21,9 @@ Changes from v1:
 
 Usage:
   python visualize_signed_attribution.py \
-      --data_path ./dataset \
-      --checkpoint_path ./model/checkpoint \
-      --out_dir ./figures_signed \
+      --data_path <project-root>/data \
+      --checkpoint_path <project-root>/artifacts/checkpoints \
+      --out_dir <project-root>/outputs/figures/signed_attribution \
       --device cuda:0
 """
 
@@ -65,6 +65,7 @@ from apex.models.gnn import PolyGIN
 from apex.data.loaders import load_dataset
 from apex.explainers.poly_gin import PolyGINExplainer
 from apex.utils.checkpoints import compatible_state_dict
+from apex.utils.paths import CHECKPOINT_DIR, DATA_DIR, FIGURE_DIR
 from apex.utils.reproducibility import set_seed
 
 # ===================================================================
@@ -1315,9 +1316,13 @@ def main():
     parser = argparse.ArgumentParser(
         description="APEX Signed Node Attribution Visualization (Appendix)"
     )
-    parser.add_argument("--data_path", type=str, default="./dataset")
-    parser.add_argument("--checkpoint_path", type=str, default="./model/checkpoint")
-    parser.add_argument("--out_dir", type=str, default="./figures_signed")
+    parser.add_argument("--data_path", type=str, default=str(DATA_DIR))
+    parser.add_argument("--checkpoint_path", type=str, default=str(CHECKPOINT_DIR))
+    parser.add_argument(
+        "--out_dir",
+        type=str,
+        default=str(FIGURE_DIR / "signed_attribution"),
+    )
     parser.add_argument("--device", type=str, default="cuda:0")
     args = parser.parse_args()
 

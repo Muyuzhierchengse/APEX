@@ -30,6 +30,7 @@ from apex.explainers.integrated_gradients import IntegratedGradients
 from apex.explainers.trapezoidal_ig import TrapezoidalIG
 from apex.explainers.simpson_ig import SimpsonIG
 from apex.utils.checkpoints import compatible_state_dict
+from apex.utils.paths import CHECKPOINT_DIR, DATA_DIR, LOG_DIR
 from apex.utils.reproducibility import set_seed
 
 
@@ -146,11 +147,11 @@ def main():
     NODE_CLS_DATASETS = {'BA_shapes'}
     is_node_cls = args.dataset in NODE_CLS_DATASETS
 
-    data_path       = './dataset'
-    checkpoint_path = './model/checkpoint'
+    data_path       = str(DATA_DIR)
+    checkpoint_path = str(CHECKPOINT_DIR)
     model_save_path = osp.join(checkpoint_path, args.dataset,
                                args.model_used + f'_seed0.pkl')
-    log_path = osp.join('log', args.dataset, args.explainer, args.model_used)
+    log_path = osp.join(str(LOG_DIR), args.dataset, args.explainer, args.model_used)
     os.makedirs(log_path, exist_ok=True)
     log_file = osp.join(log_path, f'Sparsity={args.sparsity}.log')
 
@@ -203,4 +204,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-    

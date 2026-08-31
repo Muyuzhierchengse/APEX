@@ -4,6 +4,7 @@ import torch
 import numpy as np
 from apex.models.gnn import *
 from apex.data.loaders import *
+from apex.utils.paths import CHECKPOINT_DIR, DATA_DIR, OUTPUT_DIR
 from apex.utils.reproducibility import set_seed
 import argparse
 from torch.nn.functional import cross_entropy
@@ -64,12 +65,12 @@ def main():
     parser.add_argument('--lr', type=float, default=1e-3)#5e-5
     args = parser.parse_args()
 
-    data_path = './dataset'
-    checkpoint_path = osp.join('model', 'checkpoint', args.dataset)
+    data_path = str(DATA_DIR)
+    checkpoint_path = osp.join(str(CHECKPOINT_DIR), args.dataset)
     if not osp.exists(checkpoint_path):
         os.makedirs(checkpoint_path)
     
-    output_path = './output'
+    output_path = str(OUTPUT_DIR)
     if not osp.exists(output_path):
         os.makedirs(output_path)
     

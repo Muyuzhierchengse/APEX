@@ -38,6 +38,7 @@ from apex.explainers.gradcam      import GradCAM
 from apex.explainers.poly_gin  import PolyGINExplainer
 from apex.explainers.integrated_gradients           import IntegratedGradients
 from apex.utils.checkpoints import compatible_state_dict
+from apex.utils.paths import CHECKPOINT_DIR, DATA_DIR, FIGURE_DIR
 from apex.utils.reproducibility import set_seed
 
 
@@ -46,8 +47,9 @@ from apex.utils.reproducibility import set_seed
 # ═══════════════════════════════════════════════════════════════════════════
 
 DEVICE     = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-DATA_PATH  = './dataset'
-CKPT_PATH  = './model/checkpoint'
+DATA_PATH  = str(DATA_DIR)
+CKPT_PATH  = str(CHECKPOINT_DIR)
+FIGURE_PATH = osp.join(str(FIGURE_DIR), 'method_comparison')
 DIM_HIDDEN = 300
 SPARSITY   = 0.5
 
@@ -818,7 +820,7 @@ def make_fig_mol():
     cb.set_ticklabels(['Low', '', 'High'])
     cb.ax.tick_params(labelsize=7)
 
-    fig.savefig('fig_mol.pdf', bbox_inches='tight', dpi=300)
+    fig.savefig(osp.join(FIGURE_PATH, 'fig_mol.pdf'), bbox_inches='tight', dpi=300)
     print('\nSaved fig_mol.pdf')
     plt.close(fig)
 
@@ -879,7 +881,7 @@ def make_fig_sst2():
                         transform=ax.transAxes, fontsize=5, color='red')
                 ax.set_axis_off()
 
-    fig.savefig('fig_sst2.pdf', bbox_inches='tight', dpi=300)
+    fig.savefig(osp.join(FIGURE_PATH, 'fig_sst2.pdf'), bbox_inches='tight', dpi=300)
     print('Saved fig_sst2.pdf')
     plt.close(fig)
 
@@ -960,7 +962,7 @@ def make_fig_bashapes():
     fig.legend(handles=legend_handles, loc='lower center', ncol=3,
                fontsize=8, frameon=True, bbox_to_anchor=(0.5, -0.04))
 
-    fig.savefig('fig_bashapes.pdf', bbox_inches='tight', dpi=300)
+    fig.savefig(osp.join(FIGURE_PATH, 'fig_bashapes.pdf'), bbox_inches='tight', dpi=300)
     print('Saved fig_bashapes.pdf')
     plt.close(fig)
 
@@ -971,6 +973,7 @@ def make_fig_bashapes():
 
 if __name__ == '__main__':
     set_seed(0)
+    os.makedirs(FIGURE_PATH, exist_ok=True)
     print('=== Figure 1: Molecular datasets ===')
     make_fig_mol()
     print('=== Figure 2: Graph-SST2 ===')

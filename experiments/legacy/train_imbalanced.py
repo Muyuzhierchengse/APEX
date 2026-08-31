@@ -5,6 +5,7 @@ import numpy as np
 import random
 from apex.models.gnn import *
 from apex.data.loaders import *
+from apex.utils.paths import CHECKPOINT_DIR, DATA_DIR, OUTPUT_DIR
 from apex.utils.reproducibility import set_seed
 import argparse
 import torch.nn as nn
@@ -189,10 +190,10 @@ def main():
     args = parser.parse_args()
 
     # ── 路径 ──
-    data_path = './dataset'
-    checkpoint_path = osp.join('model', 'checkpoint', args.dataset)
+    data_path = str(DATA_DIR)
+    checkpoint_path = osp.join(str(CHECKPOINT_DIR), args.dataset)
     os.makedirs(checkpoint_path, exist_ok=True)
-    output_path = './output'
+    output_path = str(OUTPUT_DIR)
     os.makedirs(output_path, exist_ok=True)
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')

@@ -33,6 +33,7 @@ from apex.data.loaders import *
 from apex.explainers.algebraic_poly_gin import PolyGINExplainer
 from apex.explainers.pgexplainer import PGExplainer
 from apex.utils.checkpoints import compatible_state_dict
+from apex.utils.paths import CHECKPOINT_DIR, DATA_DIR, LOG_DIR
 from apex.utils.reproducibility import set_seed
 
 
@@ -215,8 +216,8 @@ def main():
                              'Try 100~10000 for BBBP/PolyGIN.')
     args = parser.parse_args()
 
-    checkpoint_path = './model/checkpoint'
-    log_path = osp.join('log', args.dataset, 'FidelityExperiment', args.model_used)
+    checkpoint_path = str(CHECKPOINT_DIR)
+    log_path = osp.join(str(LOG_DIR), args.dataset, 'FidelityExperiment', args.model_used)
     os.makedirs(log_path, exist_ok=True)
     log_file = osp.join(log_path,
                         f'Sparsity={args.sparsity}_tau={args.tau}_fidelity.log')
@@ -232,7 +233,7 @@ def main():
                 f'sparsity: {args.sparsity}\n'
                 f'K={args.freeze_K}, p={args.freeze_p}, tau={args.tau}\n\n')
 
-    data, num_nodes, dim_node, num_classes = load_dataset('./dataset', args.dataset)
+    data, num_nodes, dim_node, num_classes = load_dataset(str(DATA_DIR), args.dataset)
 
     model = eval(args.model_used)(
         model_level='graph', dim_node=dim_node,

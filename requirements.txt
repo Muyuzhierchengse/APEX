@@ -1,0 +1,14 @@
+torch==2.5.1
+torch-geometric==2.6.1
+torch-scatter==2.1.2
+torch-sparse==0.6.18
+numpy==1.26.4
+scipy==1.11.4
+dive-into-graphs
+captum
+rdkit
+networkx
+matplotlib
+tqdm
+ogb
+scikit-learn
