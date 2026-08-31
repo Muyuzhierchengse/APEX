@@ -21,11 +21,9 @@ torch.load = functools.partial(torch.load, weights_only=False)
 from model.models import *
 from dataset.data import *
 from method.flowx import FlowX
-from method.graphext import GraphEXT
 from method.gnnexplainer import GNNExplainer
 from method.gradcam import GradCAM
 from method.pgexplainer import PGExplainer
-from method.fsx import FSX
 from method.evaluation import (
     get_node_mask_from_edge_mask,
     eval_related_pred,
@@ -82,8 +80,8 @@ def main():
     parser.add_argument('--model_used', type=str, default='GIN_3l',
                         choices=['GCN_2l', 'GCN_3l', 'GIN_2l', 'GIN_3l', 'PolyGIN_3l'])
     parser.add_argument('--explainer', type=str, default='GradCAM',
-                        choices=['FlowX', 'GNNExplainer', 'GraphEXT',
-                                 'PGExplainer', 'GradCAM', 'FSX', 'PolyGINExplainer',
+                        choices=['FlowX', 'GNNExplainer',
+                                 'PGExplainer', 'GradCAM', 'PolyGINExplainer',
                                  'IntegratedGradients', 'GaussLegendreIG', 'RiemannOptIG'])
     parser.add_argument('--sparsity', type=float, default=0.5)
     parser.add_argument('--dim_hidden', type=int, default=300)
@@ -267,4 +265,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-    
