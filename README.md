@@ -12,15 +12,27 @@
 
 </div>
 
+## Motivation
+
 <p align="center">
-  <img src="docs/images/apex-overview.png" alt="APEX motivation and method overview from Figure 1 of the paper" width="900">
+  <img src="docs/images/apex-overview.png" alt="APEX motivation from Figure 1 of the paper" width="900">
 </p>
 
-<p align="center"><sub>Figure 1 from the APEX paper: polynomial prediction paths turn attribution from numerical approximation into exact integration.</sub></p>
+<p align="center"><sub>Figure 1 from the paper. Conventional path attribution samples gradients at finitely many points, creating a trade-off between truncation error and computation.</sub></p>
 
-## What APEX does
+APEX addresses this limitation by designing the predictive architecture and attribution procedure together. Instead of choosing an empirical sampling resolution for an arbitrary nonlinear GNN, it exposes a polynomial degree bound that determines a sufficient finite quadrature budget.
 
-Path-based attribution usually samples a model between a baseline and an input, so its accuracy depends on the number and location of the samples. APEX co-designs the model and explanation:
+## Method overview
+
+<p align="center">
+  <img src="docs/images/apex-workflow.png" alt="APEX computation workflow from the paper" width="900">
+</p>
+
+<p align="center"><sub>APEX computation workflow from the paper: input path, PolyGIN polynomial architecture, and exact signed node attribution.</sub></p>
+
+## How APEX works
+
+The workflow has three linked stages:
 
 1. **Polynomial model.** `PolyGIN` keeps the score along `x(alpha) = x' + alpha (x - x')` polynomial.
 2. **Known degree.** With `L` polynomial blocks, the path derivative has degree at most `2^L - 1`.
