@@ -10,7 +10,7 @@ SEED = 20260831
 
 def test_edge_mask_to_node_mask_on_hand_computed_graph(source_on_path):
     import torch
-    from method.evaluation import get_node_mask_from_edge_mask
+    from apex.evaluation.fidelity import get_node_mask_from_edge_mask
 
     edge_index = torch.tensor(
         [[0, 1, 1, 2, 2, 3], [1, 0, 2, 1, 3, 2]], dtype=torch.long
@@ -39,7 +39,7 @@ def test_masked_in_out_extreme_masks_are_reproducible(
 ):
     import numpy as np
     import torch
-    from method.evaluation import eval_related_pred
+    from apex.evaluation.fidelity import eval_related_pred
 
     class TinyEvaluationModel(torch.nn.Module):
         def forward(self, x, edge_index, batch=None):
@@ -97,7 +97,7 @@ def test_nfe_counter_register_reset_remove(repo_root):
     import torch
 
     counter_cls = _load_nfe_counter_class(
-        torch, repo_root / "GraphEXT/Source/mainNFE.py"
+        torch, repo_root / "scripts/evaluate_nfe.py"
     )
     model = torch.nn.Linear(2, 2).cpu().eval()
     counter = counter_cls()
@@ -121,7 +121,7 @@ def test_nfe_counter_double_register_is_idempotent(repo_root):
     import torch
 
     counter_cls = _load_nfe_counter_class(
-        torch, repo_root / "GraphEXT/Source/mainNFE.py"
+        torch, repo_root / "scripts/evaluate_nfe.py"
     )
     model = torch.nn.Linear(2, 2).cpu().eval()
     counter = counter_cls()

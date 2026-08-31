@@ -18,21 +18,21 @@ except ImportError:
 
 torch.load = functools.partial(torch.load, weights_only=False)
 
-from model.models import *
-from dataset.data import *
-from method.flowx import FlowX
-from method.gnnexplainer import GNNExplainer
-from method.gradcam import GradCAM
-from method.pgexplainer import PGExplainer
-from method.evaluation import (
+from apex.models.gnn import *
+from apex.data.loaders import *
+from apex.explainers.flowx import FlowX
+from apex.explainers.gnnexplainer import GNNExplainer
+from apex.explainers.gradcam import GradCAM
+from apex.explainers.pgexplainer import PGExplainer
+from apex.evaluation.fidelity import (
     get_node_mask_from_edge_mask,
     eval_related_pred,
     eval_stability,
 )
-from method.explainpoly import PolyGINExplainer
-from method.ig import IntegratedGradients
-from method.glig import GaussLegendreIG
-from method.roig import RiemannOptIG
+from apex.explainers.poly_gin import PolyGINExplainer
+from apex.explainers.integrated_gradients import IntegratedGradients
+from apex.explainers.gauss_legendre_ig import GaussLegendreIG
+from apex.explainers.adaptive_riemann_ig import RiemannOptIG
 
 
 def compatible_state_dict(state_dict):

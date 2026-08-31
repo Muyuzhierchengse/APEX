@@ -63,9 +63,9 @@ except ImportError:
     pass
 torch.load = functools.partial(torch.load, weights_only=False)
 
-from model.models import PolyGIN_3l
-from dataset.data import load_dataset
-from method.explainpoly import PolyGINExplainer
+from apex.models.gnn import PolyGIN_3l
+from apex.data.loaders import load_dataset
+from apex.explainers.poly_gin import PolyGINExplainer
 
 # ===================================================================
 #  CONSTANTS
@@ -225,7 +225,7 @@ def load_data_for_dataset(data_path: str, dataset_name: str):
         orig.data.x = orig.data.x.to(torch.float32)
         orig.data.y = orig.data.y.long()
         supplement = getattr(orig, "supplement", None)
-        from dataset.data import split_dataset
+        from apex.data.loaders import split_dataset
         splits = split_dataset(orig)
         out.update({"splits": splits, "dim_node": orig.num_node_features,
                      "num_classes": orig.num_classes, "model_level": "graph",
@@ -241,7 +241,7 @@ def load_data_for_dataset(data_path: str, dataset_name: str):
             orig.data.y = raw_y.clamp(0, 1).long()
             valid_mask = ~torch.isnan(raw_y) & (raw_y != -1)
             orig = orig[valid_mask.nonzero(as_tuple=True)[0].tolist()]
-        from dataset.data import split_dataset
+        from apex.data.loaders import split_dataset
         splits = split_dataset(orig)
         out.update({"splits": splits, "dim_node": orig.num_node_features,
                      "num_classes": orig.num_classes, "model_level": "graph",
@@ -256,7 +256,7 @@ def load_data_for_dataset(data_path: str, dataset_name: str):
                      if d.x is not None and d.x.size(0) > 0
                      and d.edge_index is not None and d.edge_index.size(1) > 0]
         orig = raw[valid_idx]
-        from dataset.data import split_dataset
+        from apex.data.loaders import split_dataset
         splits = split_dataset(orig)
         out.update({"splits": splits, "dim_node": raw.num_node_features,
                      "num_classes": raw.num_classes, "model_level": "graph",

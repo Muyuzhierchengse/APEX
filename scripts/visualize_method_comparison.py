@@ -32,12 +32,12 @@ except ImportError:
     pass
 torch.load = functools.partial(torch.load, weights_only=False)
 
-from model.models import GIN_3l, PolyGIN_3l
-from dataset.data import load_dataset
-from method.flowx        import FlowX
-from method.gradcam      import GradCAM
-from method.explainpoly  import PolyGINExplainer
-from method.ig           import IntegratedGradients
+from apex.models.gnn import GIN_3l, PolyGIN_3l
+from apex.data.loaders import load_dataset
+from apex.explainers.flowx        import FlowX
+from apex.explainers.gradcam      import GradCAM
+from apex.explainers.poly_gin  import PolyGINExplainer
+from apex.explainers.integrated_gradients           import IntegratedGradients
 
 
 # ═══════════════════════════════════════════════════════════════════════════

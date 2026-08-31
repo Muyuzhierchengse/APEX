@@ -19,20 +19,20 @@ except ImportError:
 
 torch.load = functools.partial(torch.load, weights_only=False)
 
-from model.models import *
-from dataset.data import *
-from method.flowx import FlowX
-from method.gnnexplainer import GNNExplainer
-from method.gradcam import GradCAM
-from method.pgexplainer import PGExplainer
-from method.evaluation import (
+from apex.models.gnn import *
+from apex.data.loaders import *
+from apex.explainers.flowx import FlowX
+from apex.explainers.gnnexplainer import GNNExplainer
+from apex.explainers.gradcam import GradCAM
+from apex.explainers.pgexplainer import PGExplainer
+from apex.evaluation.fidelity import (
     get_node_mask_from_edge_mask,
     eval_related_pred,
 )
-from method.explainpoly import PolyGINExplainer
-from method.ig import IntegratedGradients
-from method.tig import TrapezoidalIG
-from method.sig import SimpsonIG
+from apex.explainers.poly_gin import PolyGINExplainer
+from apex.explainers.integrated_gradients import IntegratedGradients
+from apex.explainers.trapezoidal_ig import TrapezoidalIG
+from apex.explainers.simpson_ig import SimpsonIG
 
 # Counts model forward calls via a forward hook, used to measure the number
 # of function evaluations (NFE) an explainer triggers per explanation.

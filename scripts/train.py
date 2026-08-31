@@ -3,8 +3,8 @@ import os.path as osp
 import torch
 import numpy as np
 import random
-from model.models import *
-from dataset.data import *
+from apex.models.gnn import *
+from apex.data.loaders import *
 import argparse
 from torch.nn.functional import cross_entropy
 from torch_geometric.loader import DataLoader

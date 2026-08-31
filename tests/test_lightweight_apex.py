@@ -22,7 +22,7 @@ def _build_analytic_polynomial_model(torch):
 def test_apex_analytic_attribution_contract(source_on_path, tiny_graph):
     import numpy as np
     import torch
-    from method.explainpoly import PolyGINExplainer
+    from apex.explainers.poly_gin import PolyGINExplainer
 
     random.seed(SEED)
     np.random.seed(SEED)

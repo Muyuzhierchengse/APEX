@@ -34,7 +34,7 @@ def manifest(repo_root):
 
 @pytest.fixture
 def source_on_path(repo_root, monkeypatch):
-    source = repo_root / "GraphEXT" / "Source"
+    source = repo_root / "src"
     monkeypatch.syspath_prepend(str(source))
     return source
 

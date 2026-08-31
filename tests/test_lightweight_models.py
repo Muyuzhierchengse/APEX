@@ -28,7 +28,7 @@ def test_small_model_forward_contract(
     source_on_path, tiny_graph, model_name, model_level, expected_shape
 ):
     import torch
-    from model import models
+    from apex.models import gnn as models
 
     _set_cpu_seed(torch)
     x, edge_index, batch = tiny_graph
@@ -49,7 +49,7 @@ def test_small_model_forward_contract(
 @pytest.mark.parametrize("model_name", ["GCN", "GIN", "PolyGIN"])
 def test_state_dict_memory_round_trip(source_on_path, tiny_graph, model_name):
     import torch
-    from model import models
+    from apex.models import gnn as models
 
     _set_cpu_seed(torch)
     x, edge_index, batch = tiny_graph

@@ -30,10 +30,10 @@ except ImportError:
 
 torch.load = functools.partial(torch.load, weights_only=False)
 
-from model.models import *
-from dataset.data import *
-from method.subexplainer import PolyGINExplainer
-from method.pgexplainer import PGExplainer
+from apex.models.gnn import *
+from apex.data.loaders import *
+from apex.explainers.algebraic_poly_gin import PolyGINExplainer
+from apex.explainers.pgexplainer import PGExplainer
 
 
 # ─────────────────────────────────────────────────────────────────────────────
