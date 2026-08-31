@@ -12,6 +12,9 @@
 
 </div>
 
+> [!IMPORTANT]
+> **Development status — Initial release.** This repository currently contains the first public version of the APEX implementation. The codebase will continue to receive validation updates, documentation improvements, and implementation optimizations.
+
 ## Motivation
 
 <p align="center">
