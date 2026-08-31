@@ -1,0 +1,833 @@
+{
+  "schema_version": 1,
+  "baseline_commit": "c4c5277574c04b91fe62a413df3f2dd23ad94b5c",
+  "tracked_file_count": 44,
+  "generated_for": "dual-repository split baseline",
+  "controlled_enums": {
+    "ownership": [
+      "FSX",
+      "APEX",
+      "SHARED",
+      "EXPERIMENT",
+      "REFERENCE"
+    ],
+    "target_repository": [
+      "FSX",
+      "APEX",
+      "BOTH",
+      "待定"
+    ]
+  },
+  "known_baseline_issues": [
+    {
+      "id": "missing_eval_stability",
+      "status": "expected_failure",
+      "evidence": "main.py imports eval_stability from method.evaluation, where it is not defined.",
+      "exposing_test": "static contract plus future main import smoke test"
+    },
+    {
+      "id": "legacy_3l_model_names",
+      "status": "expected_failure",
+      "evidence": "Entrypoints reference GCN_3l, GIN_3l and PolyGIN_3l while models.py defines GCN, GIN and PolyGIN.",
+      "exposing_test": "model-choice registry contract"
+    },
+    {
+      "id": "dataset_choice_loader_mismatch",
+      "status": "expected_failure",
+      "evidence": "CLI dataset choices exceed the branches implemented by active dataset/data.py.",
+      "exposing_test": "parameterized loader-choice contract"
+    },
+    {
+      "id": "flowx_missing_sqrt_import",
+      "status": "expected_failure",
+      "evidence": "flowx.py calls sqrt without importing it.",
+      "exposing_test": "lightweight FlowX mask initialization"
+    },
+    {
+      "id": "mainonlyf_bashapes_path",
+      "status": "expected_failure",
+      "evidence": "mainonlyf marks BA_shapes as node classification but its runner indexes data['test'].",
+      "exposing_test": "synthetic BA_shapes entry smoke test"
+    },
+    {
+      "id": "orphan_graph_twitter_checkpoint",
+      "status": "expected_failure",
+      "evidence": "The only checkpoint is Graph-Twitter/GCN_3l.pkl, but the active loader and model symbols cannot form a closed path.",
+      "exposing_test": "checkpoint closure inventory test; checkpoint must not be loaded"
+    },
+    {
+      "id": "nfe_counter_duplicate_registration",
+      "status": "expected_failure",
+      "evidence": "NFECounter.register overwrites the latest handle without removing a previous hook.",
+      "exposing_test": "double-register hook-count test"
+    }
+  ],
+  "files": [
+    {
+      "path": ".gitattributes",
+      "git_blob_id": "dfe0770424b2a19faf507a501ebfc23be8f54e7b",
+      "sha256": "1a1dbe176bc233b499d35a57db7513f2941c99ab9759f177830c9149be99005b",
+      "size": 66,
+      "type": "text",
+      "ownership": "SHARED",
+      "target_repository": "BOTH",
+      "disposition": "copy_to_both"
+    },
+    {
+      "path": "GraphEXT/Explainable Graph Neural Networks via Structural Externalities.pdf",
+      "git_blob_id": "0b99ebad10221c268f12be08b5929e9912a9997b",
+      "sha256": "f5e204831a4121d71569234388df66313558e1ee3a67ee3ae917445337eb3382",
+      "size": 1733431,
+      "type": "pdf",
+      "ownership": "REFERENCE",
+      "target_repository": "FSX",
+      "disposition": "retain_reference"
+    },
+    {
+      "path": "GraphEXT/README.md",
+      "git_blob_id": "7f6c38436eee5a71f1be15274527c225f4865bc0",
+      "sha256": "d6d64d014d2fedfcbf77ed4218b80358f215f8c05bdbb0c473f758ebce42e51e",
+      "size": 10,
+      "type": "markdown",
+      "ownership": "FSX",
+      "target_repository": "FSX",
+      "disposition": "retain_fsx"
+    },
+    {
+      "path": "GraphEXT/Source/dataset/__pycache__/data.cpython-39.pyc",
+      "git_blob_id": "ff89d5ee03a1e87b380d00115239ee6bfc540eea",
+      "sha256": "13ea15a3ae989c95776ae08ba45e27a9cd911c9789e6395eae70cfc2384f54a1",
+      "size": 2871,
+      "type": "python-bytecode",
+      "ownership": "REFERENCE",
+      "target_repository": "待定",
+      "disposition": "record_derived_cache"
+    },
+    {
+      "path": "GraphEXT/Source/dataset/data.py",
+      "git_blob_id": "3f77d5c07b4ed53f1fd7701e0df2b4e7e79c5d85",
+      "sha256": "29654e7c327d78cc4f0ab2ed5847a83860aa01e15009d1f2c6511972335c3536",
+      "size": 4292,
+      "type": "python",
+      "ownership": "SHARED",
+      "target_repository": "BOTH",
+      "disposition": "split_by_symbol_and_copy",
+      "symbol_mappings": [
+        {
+          "symbol": "split_dataset",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "load_dataset.BBBP",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "load_dataset.Graph-SST2",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "load_dataset.BA_shapes",
+          "ownership": "APEX",
+          "target_repository": "APEX",
+          "disposition": "migrate_apex"
+        },
+        {
+          "symbol": "load_dataset.BACE",
+          "ownership": "APEX",
+          "target_repository": "APEX",
+          "disposition": "migrate_apex"
+        },
+        {
+          "symbol": "load_dataset.Mutagenicity",
+          "ownership": "APEX",
+          "target_repository": "APEX",
+          "disposition": "migrate_apex"
+        },
+        {
+          "symbol": "construct_pyg_graph",
+          "ownership": "EXPERIMENT",
+          "target_repository": "待定",
+          "disposition": "preserve_experiment"
+        },
+        {
+          "symbol": "neighbors",
+          "ownership": "EXPERIMENT",
+          "target_repository": "待定",
+          "disposition": "preserve_experiment"
+        },
+        {
+          "symbol": "k_hop_subgraph",
+          "ownership": "EXPERIMENT",
+          "target_repository": "待定",
+          "disposition": "preserve_experiment"
+        },
+        {
+          "symbol": "extract_enclosing_subgraphs",
+          "ownership": "EXPERIMENT",
+          "target_repository": "待定",
+          "disposition": "preserve_experiment"
+        }
+      ]
+    },
+    {
+      "path": "GraphEXT/Source/dataset/datafuben.py",
+      "git_blob_id": "bdabf8e470582d89d054b28e68dfef1e91def615",
+      "sha256": "be61b238d6772abbab5b2b95471b7b429802ce9b62d21da1971479e5c93fe8b8",
+      "size": 8394,
+      "type": "python",
+      "ownership": "EXPERIMENT",
+      "target_repository": "待定",
+      "disposition": "preserve_experiment"
+    },
+    {
+      "path": "GraphEXT/Source/main.py",
+      "git_blob_id": "ee05230ca671b63d2a671c6f5092c4e489151da6",
+      "sha256": "a435df650579fe546a556d504741827fe1ebf251221444abfdafe899dd2e28f3",
+      "size": 10571,
+      "type": "python",
+      "ownership": "SHARED",
+      "target_repository": "BOTH",
+      "disposition": "split_by_symbol",
+      "symbol_mappings": [
+        {
+          "symbol": "compatible_state_dict",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "set_seed",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "compute_efficiency_gap",
+          "ownership": "APEX",
+          "target_repository": "APEX",
+          "disposition": "migrate_apex"
+        },
+        {
+          "symbol": "main.explainer.FSX",
+          "ownership": "FSX",
+          "target_repository": "FSX",
+          "disposition": "retain_fsx"
+        },
+        {
+          "symbol": "main.explainer.GraphEXT",
+          "ownership": "FSX",
+          "target_repository": "FSX",
+          "disposition": "retain_fsx"
+        },
+        {
+          "symbol": "main.explainer.FlowX",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "main.explainer.GNNExplainer",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "main.explainer.GradCAM",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "main.explainer.PGExplainer",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "main.explainer.PolyGINExplainer",
+          "ownership": "APEX",
+          "target_repository": "APEX",
+          "disposition": "migrate_apex"
+        },
+        {
+          "symbol": "main.explainer.IntegratedGradients",
+          "ownership": "APEX",
+          "target_repository": "APEX",
+          "disposition": "migrate_apex"
+        },
+        {
+          "symbol": "main.explainer.GaussLegendreIG",
+          "ownership": "APEX",
+          "target_repository": "APEX",
+          "disposition": "migrate_apex"
+        },
+        {
+          "symbol": "main.explainer.RiemannOptIG",
+          "ownership": "APEX",
+          "target_repository": "APEX",
+          "disposition": "migrate_apex"
+        },
+        {
+          "symbol": "main.fidelity",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "main.stability",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        }
+      ]
+    },
+    {
+      "path": "GraphEXT/Source/mainNFE.py",
+      "git_blob_id": "7d91ec6762c74f58a27328046a1bd23ca55ff481",
+      "sha256": "92aa181c87b79f64941baffa17c9ce200138ce651d96a5427f290310cf9abf2c",
+      "size": 9407,
+      "type": "python",
+      "ownership": "APEX",
+      "target_repository": "APEX",
+      "disposition": "migrate_apex"
+    },
+    {
+      "path": "GraphEXT/Source/main_fidelity.py",
+      "git_blob_id": "86068bd2ad9fda1002ec29135272fba89a12f136",
+      "sha256": "314ac1f74ced4db30e7519da12c9ae4c36039a734ce7e373c0b8a3bf395eb346",
+      "size": 12570,
+      "type": "python",
+      "ownership": "APEX",
+      "target_repository": "APEX",
+      "disposition": "migrate_apex"
+    },
+    {
+      "path": "GraphEXT/Source/mainfuben.py",
+      "git_blob_id": "75dc81d4c48235557afb6ff0ed8026ce8965857b",
+      "sha256": "ca6b3d9f26cb8ad0e36c2a63e7097700ef88bd5930db3a8ffe9086b27f868e27",
+      "size": 10565,
+      "type": "python",
+      "ownership": "EXPERIMENT",
+      "target_repository": "待定",
+      "disposition": "preserve_experiment"
+    },
+    {
+      "path": "GraphEXT/Source/mainkeshihua.py",
+      "git_blob_id": "b9bba45a2acbb94321916b330e90fddd286a13b0",
+      "sha256": "e0d91d841760265d768cd2d667d63f71b44bfeca4d9c04ecebedc9181dec7252",
+      "size": 44857,
+      "type": "python",
+      "ownership": "APEX",
+      "target_repository": "APEX",
+      "disposition": "migrate_apex"
+    },
+    {
+      "path": "GraphEXT/Source/mainonlyf.py",
+      "git_blob_id": "4e9d5478ea65e9a4737be0e8d7cf44c605410b23",
+      "sha256": "5652f607410374dc34e19182ebe718bddc846f9fb7de1c41c3106231d142a3f1",
+      "size": 8423,
+      "type": "python",
+      "ownership": "APEX",
+      "target_repository": "APEX",
+      "disposition": "migrate_apex"
+    },
+    {
+      "path": "GraphEXT/Source/method/__pycache__/evaluation.cpython-39.pyc",
+      "git_blob_id": "f714f1e3f16effdce75351894e187cd8c0fab1b9",
+      "sha256": "8edcb81c8b09372c2bb3b2db9ef33a82edc7f58c2987589ccc8a9ee3d241f49f",
+      "size": 3278,
+      "type": "python-bytecode",
+      "ownership": "REFERENCE",
+      "target_repository": "待定",
+      "disposition": "record_derived_cache"
+    },
+    {
+      "path": "GraphEXT/Source/method/__pycache__/flowx.cpython-39.pyc",
+      "git_blob_id": "ea7dc682b61d338981d50a4c65edf8fc0e4214b7",
+      "sha256": "9e1dbcae96cc40cd97cf180f4f1d31b5de2c08fe1708858a619d8391b4f66246",
+      "size": 9817,
+      "type": "python-bytecode",
+      "ownership": "REFERENCE",
+      "target_repository": "待定",
+      "disposition": "record_derived_cache"
+    },
+    {
+      "path": "GraphEXT/Source/method/__pycache__/gnnexplainer.cpython-39.pyc",
+      "git_blob_id": "8a50f6275d7bfc5e150cc25f8039eecb65a6f16a",
+      "sha256": "5f138f8f08ef88354966d98ed9ea9efa095b4b39e7976c498297a7b09f21d077",
+      "size": 7323,
+      "type": "python-bytecode",
+      "ownership": "REFERENCE",
+      "target_repository": "待定",
+      "disposition": "record_derived_cache"
+    },
+    {
+      "path": "GraphEXT/Source/method/__pycache__/gradcam.cpython-39.pyc",
+      "git_blob_id": "312bac3cd922ed45c50513fc33552f0e02ff4b88",
+      "sha256": "7cc0ce9886b81d403823412af48251332e81dc4121d7424a1919c8fcc479e826",
+      "size": 13995,
+      "type": "python-bytecode",
+      "ownership": "REFERENCE",
+      "target_repository": "待定",
+      "disposition": "record_derived_cache"
+    },
+    {
+      "path": "GraphEXT/Source/method/__pycache__/graphext.cpython-39.pyc",
+      "git_blob_id": "94590d960dc599a27edd89e4ea05a5b836b308ab",
+      "sha256": "e96767e692e16ccfc6bdbf86f534d0e11c610c0b725493050bd67391816a3424",
+      "size": 4998,
+      "type": "python-bytecode",
+      "ownership": "REFERENCE",
+      "target_repository": "待定",
+      "disposition": "record_derived_cache"
+    },
+    {
+      "path": "GraphEXT/Source/method/__pycache__/pgexplainer.cpython-39.pyc",
+      "git_blob_id": "54236618f33b8a12a35772594b047c11434fb87d",
+      "sha256": "1206331b303863b7278227c304f6e7f3a9504890f401e5eae44f7d06c493b97e",
+      "size": 26086,
+      "type": "python-bytecode",
+      "ownership": "REFERENCE",
+      "target_repository": "待定",
+      "disposition": "record_derived_cache"
+    },
+    {
+      "path": "GraphEXT/Source/method/evaluation.py",
+      "git_blob_id": "2d7a9f30e653d97470795b890e93583008659932",
+      "sha256": "e0cb482c030071ef7d4a61d2083a0679941b08ba11d567a3f49e735a04521856",
+      "size": 2424,
+      "type": "python",
+      "ownership": "SHARED",
+      "target_repository": "BOTH",
+      "disposition": "copy_to_both"
+    },
+    {
+      "path": "GraphEXT/Source/method/evaluationfuben.py",
+      "git_blob_id": "2455d5fa23867991de492f60428257b90ff2edd6",
+      "sha256": "54a84463e9599b47ac88a352f655afcd93c7a015483c198b951e6f01b019c719",
+      "size": 8144,
+      "type": "python",
+      "ownership": "EXPERIMENT",
+      "target_repository": "待定",
+      "disposition": "preserve_experiment"
+    },
+    {
+      "path": "GraphEXT/Source/method/evaluationnoood.py",
+      "git_blob_id": "d38bfa618ecef5839c31be6f38057698a34022e4",
+      "sha256": "fe7833266555142be41ee325f44b3dbc3f2737c0649890ea0467ac1bde2f1b82",
+      "size": 15377,
+      "type": "python",
+      "ownership": "EXPERIMENT",
+      "target_repository": "APEX",
+      "disposition": "preserve_apex_experiment"
+    },
+    {
+      "path": "GraphEXT/Source/method/explainpoly.py",
+      "git_blob_id": "b1997773b3ec27171ad4eac86731e953522d17f5",
+      "sha256": "d7d8673178ad7de29d75a58f3def5707b0c36aed6712c9c864ce4c172c2c11c3",
+      "size": 7183,
+      "type": "python",
+      "ownership": "APEX",
+      "target_repository": "APEX",
+      "disposition": "migrate_apex"
+    },
+    {
+      "path": "GraphEXT/Source/method/explainpolyfuben",
+      "git_blob_id": "381f7bc2ca1d9211beda27b3bd2d6d9be147c357",
+      "sha256": "449e57a712b9ea1984916a4a0367dc0a452b6a1af24e131e32d566f4ca9b20eb",
+      "size": 6430,
+      "type": "python-no-extension",
+      "ownership": "APEX",
+      "target_repository": "APEX",
+      "disposition": "preserve_apex_experiment"
+    },
+    {
+      "path": "GraphEXT/Source/method/explainpolynoood",
+      "git_blob_id": "a208c96f258bd1042b190dcc6259326a61369f9f",
+      "sha256": "53f8b8db028a004ca8847de431bd513fbda61561d98b71cacf7d969cc2b2f98a",
+      "size": 7007,
+      "type": "python-no-extension",
+      "ownership": "APEX",
+      "target_repository": "APEX",
+      "disposition": "preserve_apex_experiment"
+    },
+    {
+      "path": "GraphEXT/Source/method/flowx.py",
+      "git_blob_id": "320febfdd786e7eae729ef614e92645a638fca96",
+      "sha256": "2ae5542dc2f8e97d6f346f42bcff85a1fd75bb7ddff066ce1b4caf25e0b9c83e",
+      "size": 34783,
+      "type": "python",
+      "ownership": "SHARED",
+      "target_repository": "BOTH",
+      "disposition": "copy_to_both"
+    },
+    {
+      "path": "GraphEXT/Source/method/fsx.py",
+      "git_blob_id": "6deed07d0dcc09c67dfac5c1de0892c05579c2e1",
+      "sha256": "deacc0a7c905da7db1a526b0f5ba242066403dc7b08547fc439929aed3cf4e47",
+      "size": 20434,
+      "type": "python",
+      "ownership": "FSX",
+      "target_repository": "FSX",
+      "disposition": "retain_fsx"
+    },
+    {
+      "path": "GraphEXT/Source/method/glig.py",
+      "git_blob_id": "9333b429061c9cdba99280d9e94c0704f1066b7d",
+      "sha256": "7e691950709d64af2334bb53303a3acd3ed5b521473a3d1421026ef48d909c36",
+      "size": 5161,
+      "type": "python",
+      "ownership": "APEX",
+      "target_repository": "APEX",
+      "disposition": "migrate_apex"
+    },
+    {
+      "path": "GraphEXT/Source/method/gnnexplainer.py",
+      "git_blob_id": "ab0fdafb0130421fd560c5d00ad8798e9694aac7",
+      "sha256": "5fb7f2febdcc9cfd126ceaf31809df5dfb334ef32286ea97248bd3662cd24561",
+      "size": 8997,
+      "type": "python",
+      "ownership": "SHARED",
+      "target_repository": "BOTH",
+      "disposition": "copy_to_both"
+    },
+    {
+      "path": "GraphEXT/Source/method/gradcam.py",
+      "git_blob_id": "23b9e1ba3c51e2a681c9623e9da3869dcb19dae6",
+      "sha256": "0b4d94c541dbc91aa180f78de0528483854c7e2476ce48cf8744d530889dfe54",
+      "size": 8022,
+      "type": "python",
+      "ownership": "SHARED",
+      "target_repository": "BOTH",
+      "disposition": "copy_to_both"
+    },
+    {
+      "path": "GraphEXT/Source/method/graphext.py",
+      "git_blob_id": "7cd664324a8b082743fbd9707aed2d5054dbc672",
+      "sha256": "37d9c692984ec2d5bae4255faf00a09e8a30bd091e6a855d764725127cafbf6f",
+      "size": 6851,
+      "type": "python",
+      "ownership": "FSX",
+      "target_repository": "FSX",
+      "disposition": "retain_fsx"
+    },
+    {
+      "path": "GraphEXT/Source/method/ig.py",
+      "git_blob_id": "42e6c512a9feff5920864990c2308950ea482836",
+      "sha256": "b74e929ec035246528bbfc87edf14c563bd7e44b25465d73f7dde9c58418adc7",
+      "size": 4646,
+      "type": "python",
+      "ownership": "APEX",
+      "target_repository": "APEX",
+      "disposition": "migrate_apex"
+    },
+    {
+      "path": "GraphEXT/Source/method/pexplain.py",
+      "git_blob_id": "3c02b6c193fe89023537675bc11bb8284720e724",
+      "sha256": "157ece81ebb70c18aeba96b008e52280972ce409a3678c247ef26ad2bd08ff86",
+      "size": 9162,
+      "type": "python",
+      "ownership": "APEX",
+      "target_repository": "APEX",
+      "disposition": "preserve_apex_prototype"
+    },
+    {
+      "path": "GraphEXT/Source/method/pgexplainer.py",
+      "git_blob_id": "9020b0035a58d363d3ffe73653fc8d8e933928b6",
+      "sha256": "207566a47349fa46be893615b0823176a234772b71535ea2f1ae203ec0ce8009",
+      "size": 37439,
+      "type": "python",
+      "ownership": "SHARED",
+      "target_repository": "BOTH",
+      "disposition": "copy_to_both"
+    },
+    {
+      "path": "GraphEXT/Source/method/roig.py",
+      "git_blob_id": "a1edec886bd5841843525ce19e688b40e6b06b4c",
+      "sha256": "faebc964c399652b39a7d3d4f96a0ffc56f1ffb029bbdb8a777e655a1b504e46",
+      "size": 7116,
+      "type": "python",
+      "ownership": "APEX",
+      "target_repository": "APEX",
+      "disposition": "migrate_apex"
+    },
+    {
+      "path": "GraphEXT/Source/method/sig.py",
+      "git_blob_id": "a203faa85e5aecb9b00b59d7b024940ab65316bf",
+      "sha256": "f49b4664652f140f9d6c0e71ca3a6f915374443bfa7ecf15ca9605b395578e51",
+      "size": 3241,
+      "type": "python",
+      "ownership": "APEX",
+      "target_repository": "APEX",
+      "disposition": "migrate_apex"
+    },
+    {
+      "path": "GraphEXT/Source/method/subexplainer.py",
+      "git_blob_id": "06e3301a522e06e9762a5b581fad79eac483bebe",
+      "sha256": "22fa1e31fa310bb38ab91c61d7d02d1a653fcd87b683d82212e150c627ffb3fb",
+      "size": 20807,
+      "type": "python",
+      "ownership": "EXPERIMENT",
+      "target_repository": "APEX",
+      "disposition": "preserve_apex_experiment"
+    },
+    {
+      "path": "GraphEXT/Source/method/tig.py",
+      "git_blob_id": "d0fd7b1ae4884bf19df29e0d87d8c681614fe52d",
+      "sha256": "0f7d52ee1af22b44e864cc3bf4f2ddd00cac1b17cc06d70806909b208d791ae2",
+      "size": 2853,
+      "type": "python",
+      "ownership": "APEX",
+      "target_repository": "APEX",
+      "disposition": "migrate_apex"
+    },
+    {
+      "path": "GraphEXT/Source/model/__pycache__/models.cpython-39.pyc",
+      "git_blob_id": "c4f894732a6388ab75dad5f946895fd80300e6e9",
+      "sha256": "2e71ab9acca647014af47701515c6bf99ddf218d5cd7635d9d5200ea26b75021",
+      "size": 30229,
+      "type": "python-bytecode",
+      "ownership": "REFERENCE",
+      "target_repository": "待定",
+      "disposition": "record_derived_cache"
+    },
+    {
+      "path": "GraphEXT/Source/model/models.py",
+      "git_blob_id": "f0fc0204e1cc552e67042b082ce3b2ae76f72271",
+      "sha256": "5b7b4fc17d4682c2d34f9b3cba1ad7a96e98c9d4b0e59e7eada3fb59f9124af8",
+      "size": 35051,
+      "type": "python",
+      "ownership": "SHARED",
+      "target_repository": "BOTH",
+      "disposition": "split_by_symbol_and_copy",
+      "symbol_mappings": [
+        {
+          "symbol": "GINConv",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "GNNBasic",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "GNNBasic.arguments_read",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "PolyActivation",
+          "ownership": "APEX",
+          "target_repository": "APEX",
+          "disposition": "migrate_apex"
+        },
+        {
+          "symbol": "PolyScaleNorm",
+          "ownership": "APEX",
+          "target_repository": "APEX",
+          "disposition": "migrate_apex"
+        },
+        {
+          "symbol": "_poly_mlp",
+          "ownership": "APEX",
+          "target_repository": "APEX",
+          "disposition": "migrate_apex"
+        },
+        {
+          "symbol": "PolyGINConv",
+          "ownership": "APEX",
+          "target_repository": "APEX",
+          "disposition": "migrate_apex"
+        },
+        {
+          "symbol": "PolyGIN",
+          "ownership": "APEX",
+          "target_repository": "APEX",
+          "disposition": "migrate_apex"
+        },
+        {
+          "symbol": "GCN",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "GCN_2l",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "GIN",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "GIN_2l",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "GCNConv",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "GlobalMeanPool",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "IdenticalPool",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "GCN_BN",
+          "ownership": "EXPERIMENT",
+          "target_repository": "待定",
+          "disposition": "preserve_experiment"
+        },
+        {
+          "symbol": "GraphSequential",
+          "ownership": "EXPERIMENT",
+          "target_repository": "待定",
+          "disposition": "preserve_experiment"
+        },
+        {
+          "symbol": "GCN_2l_mask",
+          "ownership": "EXPERIMENT",
+          "target_repository": "待定",
+          "disposition": "preserve_experiment"
+        },
+        {
+          "symbol": "GIN_2l_mask",
+          "ownership": "EXPERIMENT",
+          "target_repository": "待定",
+          "disposition": "preserve_experiment"
+        },
+        {
+          "symbol": "GCNConv_mask",
+          "ownership": "EXPERIMENT",
+          "target_repository": "待定",
+          "disposition": "preserve_experiment"
+        },
+        {
+          "symbol": "GINConv_mask",
+          "ownership": "EXPERIMENT",
+          "target_repository": "待定",
+          "disposition": "preserve_experiment"
+        }
+      ]
+    },
+    {
+      "path": "GraphEXT/Source/model_train.py",
+      "git_blob_id": "c827fb225866cf5ba9d500f865c8d496cfc0eb6e",
+      "sha256": "ce28f919e3cd2e3a29464571d33223489dedbd4ea2c0441c984be1b622ffe97b",
+      "size": 12121,
+      "type": "python",
+      "ownership": "SHARED",
+      "target_repository": "BOTH",
+      "disposition": "split_by_symbol_and_copy",
+      "symbol_mappings": [
+        {
+          "symbol": "set_seed",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "accuracy",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "accuracy_dataloader",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "eval_dataloader",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "count_parameters",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "main.GCN_GIN_training",
+          "ownership": "SHARED",
+          "target_repository": "BOTH",
+          "disposition": "copy_to_both"
+        },
+        {
+          "symbol": "main.PolyGIN_training",
+          "ownership": "APEX",
+          "target_repository": "APEX",
+          "disposition": "migrate_apex"
+        }
+      ]
+    },
+    {
+      "path": "GraphEXT/Source/model_trainfuben.py",
+      "git_blob_id": "ceb3345bbc91dff312074a947a655ea7454b902d",
+      "sha256": "a41db18c8f933aca782360ad3c4510972e995c7a30b2d3474e081c41e9b0ff35",
+      "size": 17896,
+      "type": "python",
+      "ownership": "EXPERIMENT",
+      "target_repository": "待定",
+      "disposition": "preserve_experiment"
+    },
+    {
+      "path": "GraphEXT/Source/visualize_signed_attribution.py",
+      "git_blob_id": "c51d9ad9950259ec4125e6ad3a93fd5cde83cc37",
+      "sha256": "d329a594384bcb4531d6148abb19814e5570734872e8c8051d114a40b510bb2f",
+      "size": 61312,
+      "type": "python",
+      "ownership": "APEX",
+      "target_repository": "APEX",
+      "disposition": "migrate_apex"
+    },
+    {
+      "path": "LICENSE",
+      "git_blob_id": "3e55e78cd13ffd5579102e638c77d67337ed7b36",
+      "sha256": "56baaf7ce18bdbbf1ec2c5bc100da75af043342efeb231a7fd98138e06e62339",
+      "size": 1093,
+      "type": "text",
+      "ownership": "SHARED",
+      "target_repository": "BOTH",
+      "disposition": "copy_to_both"
+    },
+    {
+      "path": "model/checkpoint/Graph-Twitter/GCN_3l.pkl",
+      "git_blob_id": "ae8ccba4e07d94aa0f528ed801743ec3e1f36a41",
+      "sha256": "c6ab05de00875d3e09a62b7ecee84ed19560edafc09a21e28a02428969ce5f41",
+      "size": 3655838,
+      "type": "model-weight",
+      "ownership": "REFERENCE",
+      "target_repository": "FSX",
+      "disposition": "retain_reference_asset"
+    }
+  ]
+}
