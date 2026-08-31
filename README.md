@@ -1,68 +1,50 @@
+<div align="center">
+
 # APEX
 
+## Exact Aumann–Shapley Attribution through Polynomial Architecture–Attribution Co-Design
+
 [![Paper](https://img.shields.io/badge/arXiv-2607.21094-b31b1b.svg)](https://arxiv.org/abs/2607.21094)
+[![PDF](https://img.shields.io/badge/Paper-PDF-4b5563.svg)](https://arxiv.org/pdf/2607.21094)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Research code for **A Polynomial Architecture-Attribution Co-Design Framework for Exact Aumann-Shapley Attribution in GNNs**.
+**PolyGIN makes the prediction path polynomial; APEX then computes its attribution exactly under the paper's assumptions.**
 
-APEX co-designs a polynomial GNN architecture, **PolyGIN**, with its attribution method. Because the model score remains a bounded-degree polynomial along the baseline-to-input path, APEX can replace heuristic path sampling with a fixed Gauss-Legendre rule that is exact under the paper's stated assumptions, up to floating-point precision.
+</div>
 
-**Paper:** Bizu Feng, Zhimu Yang, Shuming Wang, Shaode Yu, Yuan Cheng, Xiaojun Qian, and Zixin Hu. [arXiv:2607.21094](https://arxiv.org/abs/2607.21094) · [PDF](https://arxiv.org/pdf/2607.21094)
+<p align="center">
+  <img src="docs/images/apex-overview.png" alt="APEX motivation and method overview from Figure 1 of the paper" width="900">
+</p>
 
-## Method at a glance
+<p align="center"><sub>Figure 1 from the APEX paper: polynomial prediction paths turn attribution from numerical approximation into exact integration.</sub></p>
 
-```mermaid
-flowchart LR
-    X[Baseline and input graph features] --> P[Straight-line attribution path]
-    M[PolyGIN architecture] --> D[Bounded polynomial model score]
-    P --> D
-    D --> B[Known derivative degree bound]
-    B --> Q[Fixed Gauss-Legendre points]
-    Q --> F[Feature-level Aumann-Shapley attribution]
-    F --> N[Node scores with completeness preserved]
+## What APEX does
+
+Path-based attribution usually samples a model between a baseline and an input, so its accuracy depends on the number and location of the samples. APEX co-designs the model and explanation:
+
+1. **Polynomial model.** `PolyGIN` keeps the score along `x(alpha) = x' + alpha (x - x')` polynomial.
+2. **Known degree.** With `L` polynomial blocks, the path derivative has degree at most `2^L - 1`.
+3. **Exact quadrature.** A fixed `2^(L-1)`-point Gauss–Legendre rule integrates that derivative exactly under the stated architecture assumptions, up to floating-point precision.
+
+The resulting feature attributions are aggregated into signed node scores while preserving completeness.
+
+## Quick start
+
+The active loader supports node classification on `BA_shapes` and graph classification on `BBBP`, `Graph-SST2`, `BACE`, and `Mutagenicity`. Available models are `GCN`, `GCN_2l`, `GIN`, `GIN_2l`, and `PolyGIN`.
+
+```powershell
+python.exe scripts/train.py --dataset BBBP --model_used PolyGIN
+python.exe scripts/evaluate.py --dataset BBBP --model_used PolyGIN --explainer PolyGINExplainer
 ```
 
-For baseline `x'` and input `x`, APEX evaluates the Aumann-Shapley path attribution
+These research commands may download data, train models, or write outputs. The repository tests do none of those things.
 
-$$\mathrm{AS}_i(x;x')=(x_i-x'_i)\int_0^1
-\frac{\partial F\left(x'+\alpha(x-x')\right)}{\partial x_i}\,d\alpha.$$
+<details>
+<summary><strong>Installation</strong></summary>
 
-With `L` polynomial transformation blocks, the derivative along the path has degree at most `2^L - 1`. A `2^(L-1)`-point Gauss-Legendre rule therefore integrates it exactly under the polynomial architecture assumptions. Feature attributions are then aggregated into signed node-level scores while preserving completeness.
+The lightweight CPU test environment uses Python 3.9, PyTorch 2.5.1 CPU, torch-geometric 2.6.1, torch-scatter 2.1.2, torch-sparse 0.6.18, NumPy 1.26.4, and SciPy 1.11.4. Full experiments additionally require `requirements.txt`.
 
-## Code map
-
-| Paper component | Implementation |
-|---|---|
-| PolyGIN architecture | `src/apex/models/gnn.py` |
-| Main PolyGINExplainer | `src/apex/explainers/poly_gin.py` |
-| Algebraic/exact variant | `src/apex/explainers/algebraic_poly_gin.py` |
-| Numerical integration baselines | `src/apex/explainers/*_ig.py` |
-| Fidelity, stability, and NFE | `src/apex/evaluation/` |
-| Main evaluation | `scripts/evaluate.py` |
-| Signed attribution figures | `scripts/visualize_signed_attribution.py` |
-
-FSX is a separate message-flow and structural explanation method maintained in the [FSX repository](https://github.com/Muyuzhierchengse/FSX).
-
-## Repository layout
-
-```text
-src/apex/                installable APEX package
-scripts/                 training, evaluation, and visualization entries
-experiments/variants/    traceable APEX method variants
-experiments/legacy/      preserved historical experiments
-tests/                   static and lightweight CPU regression tests
-data/                    dataset root (runtime, ignored)
-artifacts/checkpoints/   model and explainer checkpoints
-outputs/                 logs, results, and figures (runtime, ignored)
-```
-
-The Aumann-Shapley candidate, Expected IG, PolyGNN Shapley prototype, and marginal-OOD evaluation remain separate under `experiments/variants/`; they are not presented as one merged final algorithm.
-
-## Installation
-
-The lightweight CPU tests use Python 3.9, PyTorch 2.5.1 CPU, torch-geometric 2.6.1, torch-scatter 2.1.2, torch-sparse 0.6.18, NumPy 1.26.4, and SciPy 1.11.4. Full experiments additionally require the research dependencies in `requirements.txt`.
-
-On Windows CPU, install PyTorch and matching PyG binary wheels before the remaining requirements:
+On Windows CPU, install PyTorch and matching PyG wheels first:
 
 ```powershell
 python.exe -I -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
@@ -72,55 +54,60 @@ python.exe -I -m pip install --no-cache-dir -r requirements.txt
 python.exe -I -m pip install --no-deps --no-cache-dir --no-build-isolation -e .
 ```
 
-Do not fall back to compiling the PyG extensions from source on this setup.
-
-For a non-editable installation, point the package to this checkout:
+For a non-editable installation, identify the checkout explicitly:
 
 ```powershell
 $env:APEX_PROJECT_ROOT = "E:\workplace\APEX"
 ```
 
-`APEX_PROJECT_ROOT` must contain `pyproject.toml` and `src/apex`. Project paths are independent of the shell working directory:
+The root must contain `pyproject.toml` and `src/apex`. Runtime paths are resolved from it, never from the shell working directory.
 
-- data: `data/`
-- checkpoints: `artifacts/checkpoints/`
-- logs: `outputs/logs/`
-- results: `outputs/results/`
-- figures: `outputs/figures/`
+</details>
 
-## Quick start
+## Implementation
 
-The active loader supports `BA_shapes` for node classification and `BBBP`, `Graph-SST2`, `BACE`, and `Mutagenicity` for graph classification. Models include `GCN`, `GCN_2l`, `GIN`, `GIN_2l`, and `PolyGIN`.
+- `src/apex/models/gnn.py` — `PolyGIN` and the shared GNN models
+- `src/apex/explainers/poly_gin.py` — main `PolyGINExplainer`
+- `src/apex/explainers/algebraic_poly_gin.py` — algebraic/exact variant
+- `src/apex/explainers/` — numerical integration baselines
+- `src/apex/evaluation/` — fidelity, stability, and NFE
+- `experiments/variants/` — traceable method variants kept separate from the main implementation
 
-```powershell
-python.exe scripts/train.py --dataset BBBP --model_used PolyGIN
-python.exe scripts/evaluate.py --dataset BBBP --model_used PolyGIN --explainer PolyGINExplainer
-python.exe scripts/evaluate_nfe.py --dataset BBBP --model_used PolyGIN --explainer PolyGINExplainer
-python.exe scripts/evaluate_fidelity_only.py --dataset BBBP --model_used PolyGIN --explainer PolyGINExplainer
-python.exe scripts/compare_exact_fidelity.py --dataset BBBP --model_used PolyGIN
-python.exe scripts/visualize_method_comparison.py
-python.exe scripts/visualize_signed_attribution.py --device cpu
+```text
+src/apex/                installable package
+scripts/                 training, evaluation, and visualization
+experiments/variants/    method variants
+experiments/legacy/      historical experiments
+tests/                   static and lightweight CPU regression tests
+data/                    runtime datasets (ignored)
+artifacts/checkpoints/   runtime checkpoints
+outputs/                 logs, results, and figures (ignored)
 ```
 
-Formal entries may download datasets, train models or PGExplainer, and write artifacts. The refactor validation did not run paper-scale experiments.
+### Entry points
 
-## Tests
+- Main evaluation: `scripts/evaluate.py`
+- NFE evaluation: `scripts/evaluate_nfe.py`
+- Fidelity-only evaluation: `scripts/evaluate_fidelity_only.py`
+- Exact-fidelity comparison: `scripts/compare_exact_fidelity.py`
+- Training: `scripts/train.py`
+- Method comparison figures: `scripts/visualize_method_comparison.py`
+- Signed attribution figures: `scripts/visualize_signed_attribution.py`
 
-The lightweight suite uses tiny, fixed-seed artificial graphs and does not train models, download datasets, or load checkpoints.
+## Lightweight validation
 
 ```powershell
 python.exe -I -B -m pytest -p no:cacheprovider -m "not lightweight_graph" --timeout=20 tests
 python.exe -I -B -m pytest -p no:cacheprovider -m lightweight_graph --timeout=20 tests
 ```
 
-## Notes
+The suite uses tiny fixed-seed graphs. It does not train models, download datasets, load checkpoints, or use CUDA.
 
-- This repository contains no APEX dataset or checkpoint.
-- The complete DIG, Captum, RDKit, and OGB stack and paper-scale runs were not exercised during the refactor.
-- `experiments/legacy/train_imbalanced.py` retains historical Graph-Twitter and `*_3l` contracts; it is not an active entry.
-- Only load trusted pickle checkpoints with `torch.load`.
+> [!NOTE]
+> The complete research dependency stack and paper-scale experiments have not been reproduced as part of the repository refactor. Only load trusted pickle checkpoints with `torch.load`.
 
-## Citation
+<details>
+<summary><strong>Citation</strong></summary>
 
 ```bibtex
 @misc{feng2026apex,
@@ -135,6 +122,6 @@ python.exe -I -B -m pytest -p no:cacheprovider -m lightweight_graph --timeout=20
 }
 ```
 
-## License
+</details>
 
 Released under the [MIT License](LICENSE).
