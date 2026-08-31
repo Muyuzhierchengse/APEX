@@ -1,4 +1,3 @@
-import ast
 import random
 
 import pytest
@@ -80,27 +79,13 @@ def test_masked_in_out_extreme_masks_are_reproducible(
         assert first["masked_out"] == pytest.approx(first["ori"], abs=1e-7, rel=1e-7)
 
 
-def _load_nfe_counter_class(torch, source_path):
-    """Execute only the production class AST, avoiding the dependency-heavy entry imports."""
-    tree = ast.parse(source_path.read_bytes(), filename=str(source_path))
-    class_node = next(
-        node for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name == "NFECounter"
-    )
-    module = ast.fix_missing_locations(ast.Module(body=[class_node], type_ignores=[]))
-    namespace = {"torch": torch}
-    exec(compile(module, str(source_path), "exec"), namespace)
-    return namespace["NFECounter"]
-
-
-def test_nfe_counter_register_reset_remove(repo_root):
+def test_nfe_counter_register_reset_remove(source_on_path):
     import torch
+    from apex.evaluation.nfe import NFECounter
 
-    counter_cls = _load_nfe_counter_class(
-        torch, repo_root / "scripts/evaluate_nfe.py"
-    )
     model = torch.nn.Linear(2, 2).cpu().eval()
-    counter = counter_cls()
+    counter = NFECounter()
+    assert counter.value == 0
     counter.register(model)
     model(torch.ones(1, 2))
     model(torch.ones(1, 2))
@@ -109,24 +94,68 @@ def test_nfe_counter_register_reset_remove(repo_root):
     model(torch.ones(1, 2))
     assert counter.value == 1
     counter.remove()
+    assert counter._hook_handle is None
     model(torch.ones(1, 2))
     assert counter.value == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="known baseline issue: repeated NFECounter.register leaves duplicate hooks",
-)
-def test_nfe_counter_double_register_is_idempotent(repo_root):
+def test_nfe_counter_double_register_is_idempotent(source_on_path):
     import torch
+    from apex.evaluation.nfe import NFECounter
 
-    counter_cls = _load_nfe_counter_class(
-        torch, repo_root / "scripts/evaluate_nfe.py"
-    )
     model = torch.nn.Linear(2, 2).cpu().eval()
-    counter = counter_cls()
+    counter = NFECounter()
     counter.register(model)
     counter.register(model)
     model(torch.ones(1, 2))
     assert counter.value == 1
     counter.remove()
+
+
+def test_nfe_counter_remove_is_idempotent(source_on_path):
+    import torch
+    from apex.evaluation.nfe import NFECounter
+
+    model = torch.nn.Linear(2, 2).cpu().eval()
+    counter = NFECounter()
+    counter.register(model)
+    counter.remove()
+    counter.remove()
+    assert counter._hook_handle is None
+    model(torch.ones(1, 2))
+    assert counter.value == 0
+
+
+def test_fixed_explanation_has_exact_stability(source_on_path, tiny_graph):
+    import torch
+    from apex.evaluation.stability import eval_stability, jaccard_similarity
+
+    x, edge_index, _ = tiny_graph
+    node_masks = [
+        torch.tensor([1.0, 0.9, 0.0, 0.0, 0.0]),
+        torch.tensor([0.8, 1.0, 0.0, 0.0, 0.0]),
+    ]
+
+    class FixedMaskExplainer:
+        def __call__(self, x, edge_index, **kwargs):
+            edge_masks = [torch.ones(edge_index.size(1)) for _ in range(2)]
+            return edge_masks, [mask.clone() for mask in node_masks]
+
+    random.seed(SEED)
+    torch.manual_seed(SEED)
+    stability = eval_stability(
+        FixedMaskExplainer(),
+        x,
+        edge_index,
+        node_masks,
+        pred_cls=0,
+        num_classes=2,
+        num_nodes=x.size(0),
+        sparsity=0.6,
+        device=torch.device("cpu"),
+        perturb_ratio=0.1,
+        n_perturb=3,
+        seed_base=SEED,
+    )
+    assert jaccard_similarity(frozenset({0, 1}), frozenset({0, 1})) == 1.0
+    assert stability == 1.0

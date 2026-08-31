@@ -1,11 +1,8 @@
 import argparse
 import os
 import os.path as osp
-import re
 import time                            # ← 新增
 import functools
-from collections import OrderedDict
-import numpy as np
 import torch
 from torch_geometric.loader import DataLoader
 from torch_geometric import __version__
@@ -27,31 +24,14 @@ from apex.explainers.pgexplainer import PGExplainer
 from apex.evaluation.fidelity import (
     get_node_mask_from_edge_mask,
     eval_related_pred,
-    eval_stability,
 )
+from apex.evaluation.stability import eval_stability
 from apex.explainers.poly_gin import PolyGINExplainer
 from apex.explainers.integrated_gradients import IntegratedGradients
 from apex.explainers.gauss_legendre_ig import GaussLegendreIG
 from apex.explainers.adaptive_riemann_ig import RiemannOptIG
-
-
-def compatible_state_dict(state_dict):
-    comp = OrderedDict()
-    for key, value in state_dict.items():
-        new_key = re.sub(r'conv(1|s\.[0-9]+)\.weight',
-                         r'conv\1.lin.weight', key)
-        comp[new_key] = value.T if new_key != key else value
-    return comp
-
-
-def set_seed(seed=0):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+from apex.utils.checkpoints import compatible_state_dict
+from apex.utils.reproducibility import set_seed
 
 
 def compute_efficiency_gap(model, x, edge_index, node_scores, pred_cls, device):
@@ -75,10 +55,9 @@ def main():
     set_seed(0)
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, default='BBBP',
-                        choices=['BBBP', 'ClinTox', 'Graph-SST2', 'Graph-Twitter',
-                                 'BA_2Motifs', 'BACE', 'Tox21', 'ToxCast'])
-    parser.add_argument('--model_used', type=str, default='GIN_3l',
-                        choices=['GCN_2l', 'GCN_3l', 'GIN_2l', 'GIN_3l', 'PolyGIN_3l'])
+                        choices=['BBBP', 'Graph-SST2', 'BACE', 'Mutagenicity'])
+    parser.add_argument('--model_used', type=str, default='GIN',
+                        choices=['GCN_2l', 'GCN', 'GIN_2l', 'GIN', 'PolyGIN'])
     parser.add_argument('--explainer', type=str, default='GradCAM',
                         choices=['FlowX', 'GNNExplainer',
                                  'PGExplainer', 'GradCAM', 'PolyGINExplainer',

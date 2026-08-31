@@ -1,12 +1,8 @@
 import argparse
 import os
 import os.path as osp
-import re
 import time
 import functools
-from collections import OrderedDict
-import numpy as np
-import random
 import torch
 from torch_geometric.loader import DataLoader
 from torch_geometric import __version__
@@ -33,25 +29,9 @@ from apex.explainers.poly_gin import PolyGINExplainer
 from apex.explainers.integrated_gradients import IntegratedGradients
 from apex.explainers.trapezoidal_ig import TrapezoidalIG
 from apex.explainers.simpson_ig import SimpsonIG
+from apex.utils.checkpoints import compatible_state_dict
+from apex.utils.reproducibility import set_seed
 
-
-def compatible_state_dict(state_dict):
-    comp = OrderedDict()
-    for key, value in state_dict.items():
-        new_key = re.sub(r'conv(1|s\.[0-9]+)\.weight',
-                         r'conv\1.lin.weight', key)
-        comp[new_key] = value.T if new_key != key else value
-    return comp
-
-
-def set_seed(seed=0):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
 
 # Explains every correctly-predicted test graph and logs fidelity/sparsity/time,
 # then writes the averaged results via _write_summary.
@@ -152,7 +132,7 @@ def main():
     set_seed(0)
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, default='BBBP',
-                        choices=[ 'BBBP', 'Graph-SST2','BACE', 'Mutagenicity', 'BA_shapes'])
+                        choices=['BBBP', 'Graph-SST2', 'BACE', 'Mutagenicity'])
     parser.add_argument('--model_used', type=str, default='GIN',
                         choices=['GCN_2l', 'GCN', 'GIN_2l', 'GIN', 'PolyGIN'])
     parser.add_argument('--explainer', type=str, default='GradCAM',

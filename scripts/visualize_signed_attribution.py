@@ -32,11 +32,9 @@ import csv
 import functools
 import os
 import os.path as osp
-import random
 import re
 import sys
 import warnings
-from collections import OrderedDict
 from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -63,9 +61,11 @@ except ImportError:
     pass
 torch.load = functools.partial(torch.load, weights_only=False)
 
-from apex.models.gnn import PolyGIN_3l
+from apex.models.gnn import PolyGIN
 from apex.data.loaders import load_dataset
 from apex.explainers.poly_gin import PolyGINExplainer
+from apex.utils.checkpoints import compatible_state_dict
+from apex.utils.reproducibility import set_seed
 
 # ===================================================================
 #  CONSTANTS
@@ -85,23 +85,6 @@ DIM_HIDDEN = 300
 #  UTILITIES  (from main.py)
 # ===================================================================
 
-def set_seed(seed: int = 0) -> None:
-    random.seed(seed); np.random.seed(seed)
-    torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-
-def compatible_state_dict(state_dict: dict) -> OrderedDict:
-    comp = OrderedDict()
-    for key, value in state_dict.items():
-        new_key = re.sub(
-            r"conv(1|s\.[0-9]+)\.weight", r"conv\1.lin.weight", key
-        )
-        comp[new_key] = value.T if new_key != key else value
-    return comp
-
-
 # ===================================================================
 #  LOAD MODEL
 # ===================================================================
@@ -110,24 +93,24 @@ def load_model_for_dataset(
     dataset_name: str, dim_node: int, num_classes: int,
     checkpoint_path: str, device: torch.device, model_level: str = "graph",
 ) -> nn.Module:
-    model = PolyGIN_3l(
+    model = PolyGIN(
         model_level=model_level, dim_node=dim_node,
         dim_hidden=DIM_HIDDEN, num_classes=num_classes,
     ).to(device)
     ckpt_dir = osp.join(checkpoint_path, dataset_name)
     candidates = [
-        osp.join(ckpt_dir, "PolyGIN_3l_seed0.pkl"),
-        osp.join(ckpt_dir, "PolyGIN_3l_seed01.pkl"),
+        osp.join(ckpt_dir, "PolyGIN_seed0.pkl"),
+        osp.join(ckpt_dir, "PolyGIN_seed01.pkl"),
     ]
     ckpt_file = None
     for p in candidates:
         if osp.exists(p): ckpt_file = p; break
     if ckpt_file is None and osp.isdir(ckpt_dir):
         for fname in sorted(os.listdir(ckpt_dir)):
-            if fname.startswith("PolyGIN_3l") and fname.endswith(".pkl"):
+            if fname.startswith("PolyGIN") and fname.endswith(".pkl"):
                 ckpt_file = osp.join(ckpt_dir, fname); break
     if ckpt_file is None:
-        raise FileNotFoundError(f"No PolyGIN_3l checkpoint found in {ckpt_dir}")
+        raise FileNotFoundError(f"No PolyGIN checkpoint found in {ckpt_dir}")
     raw_state = torch.load(ckpt_file, map_location=device)
     model.load_state_dict(compatible_state_dict(raw_state))
     model.eval()

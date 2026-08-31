@@ -9,8 +9,7 @@
   5. 固定布局 + 统一可视化风格
 """
 
-import os, os.path as osp, functools, re, random
-from collections import OrderedDict
+import os, os.path as osp, functools
 
 import numpy as np
 import torch
@@ -32,30 +31,19 @@ except ImportError:
     pass
 torch.load = functools.partial(torch.load, weights_only=False)
 
-from apex.models.gnn import GIN_3l, PolyGIN_3l
+from apex.models.gnn import GIN, PolyGIN
 from apex.data.loaders import load_dataset
 from apex.explainers.flowx        import FlowX
 from apex.explainers.gradcam      import GradCAM
 from apex.explainers.poly_gin  import PolyGINExplainer
 from apex.explainers.integrated_gradients           import IntegratedGradients
+from apex.utils.checkpoints import compatible_state_dict
+from apex.utils.reproducibility import set_seed
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  Constants
 # ═══════════════════════════════════════════════════════════════════════════
-
-def set_seed(seed=0):
-    random.seed(seed); np.random.seed(seed)
-    torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-def compatible_state_dict(sd):
-    comp = OrderedDict()
-    for k, v in sd.items():
-        nk = re.sub(r'conv(1|s\.[0-9]+)\.weight', r'conv\1.lin.weight', k)
-        comp[nk] = v.T if nk != k else v
-    return comp
 
 DEVICE     = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 DATA_PATH  = './dataset'
@@ -469,7 +457,7 @@ def smart_select(ds_name, graphs, n=2, min_nodes=8, max_nodes=50):
 
 def load_model(dataset, model_name, dim_node, num_classes, model_level='graph'):
     ckpt      = osp.join(CKPT_PATH, dataset, model_name + '_seed0.pkl')
-    model_cls = PolyGIN_3l if model_name == 'PolyGIN_3l' else GIN_3l
+    model_cls = PolyGIN if model_name == 'PolyGIN' else GIN
     model = model_cls(
         model_level=model_level,
         dim_node=dim_node,
@@ -757,8 +745,8 @@ def make_fig_mol():
     for ds in DATASETS:
         data, num_nodes, dim_node, num_classes = load_dataset(DATA_PATH, ds)
         dataset_info[ds] = (data, num_nodes, dim_node, num_classes)
-        models_gin[ds]   = load_model(ds, 'GIN_3l',     dim_node, num_classes)
-        models_poly[ds]  = load_model(ds, 'PolyGIN_3l', dim_node, num_classes)
+        models_gin[ds]   = load_model(ds, 'GIN',     dim_node, num_classes)
+        models_poly[ds]  = load_model(ds, 'PolyGIN', dim_node, num_classes)
 
     selected = {}
     for ds in DATASETS:
@@ -845,8 +833,8 @@ def make_fig_sst2():
     METHODS  = EXPLAINER_NAMES
 
     data, _, dim_node, num_classes = load_dataset(DATA_PATH, DS)
-    model_gin  = load_model(DS, 'GIN_3l',     dim_node, num_classes)
-    model_poly = load_model(DS, 'PolyGIN_3l', dim_node, num_classes)
+    model_gin  = load_model(DS, 'GIN',     dim_node, num_classes)
+    model_poly = load_model(DS, 'PolyGIN', dim_node, num_classes)
     graphs = pick_graphs(list(data['test']), n=N_GRAPHS, min_nodes=4, max_nodes=25)
 
     vocab = {}
@@ -906,8 +894,8 @@ def make_fig_bashapes():
     METHODS  = EXPLAINER_NAMES
 
     data, _, dim_node, num_classes = load_dataset(DATA_PATH, DS)
-    model_gin  = load_model(DS, 'GIN_3l',     dim_node, num_classes, model_level='node')
-    model_poly = load_model(DS, 'PolyGIN_3l', dim_node, num_classes, model_level='node')
+    model_gin  = load_model(DS, 'GIN',     dim_node, num_classes, model_level='node')
+    model_poly = load_model(DS, 'PolyGIN', dim_node, num_classes, model_level='node')
 
     if isinstance(data, dict):
         from torch_geometric.data import Batch

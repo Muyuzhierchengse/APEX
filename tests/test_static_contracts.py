@@ -7,7 +7,8 @@ NO_EXTENSION_SOURCES = {
     "GraphEXT/Source/method/explainpolyfuben",
     "GraphEXT/Source/method/explainpolynoood",
 }
-APEX_LAYOUT_BASE_COMMIT = "ec82c36d50327af3738d663d36b2589dedd666c4"
+APEX_PRE_LAYOUT_COMMIT = "ec82c36d50327af3738d663d36b2589dedd666c4"
+APEX_LAYOUT_COMMIT = "5d4730d1f6cb079d5ce9b3b4f8a75e08f06b8ce0"
 MOVE_MAP = {
     "GraphEXT/Source/model/models.py": "src/apex/models/gnn.py",
     "GraphEXT/Source/dataset/data.py": "src/apex/data/loaders.py",
@@ -65,6 +66,66 @@ def _top_level_classes(path):
     return {node.name for node in tree.body if isinstance(node, ast.ClassDef)}
 
 
+def _top_level_functions(path):
+    tree = ast.parse(path.read_bytes(), filename=str(path))
+    return {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+
+def _function_ast(content, filename, function_name):
+    tree = ast.parse(content, filename=filename)
+    node = next(
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == function_name
+    )
+    return ast.dump(node, include_attributes=False)
+
+
+def _argument_contract(path, option):
+    tree = ast.parse(path.read_bytes(), filename=str(path))
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "add_argument"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == option
+        ):
+            continue
+        keywords = {item.arg: item.value for item in node.keywords}
+        return (
+            ast.literal_eval(keywords["default"]),
+            ast.literal_eval(keywords["choices"]),
+        )
+    raise AssertionError(f"missing argparse contract for {option} in {path}")
+
+
+def _loader_dataset_branches(path):
+    tree = ast.parse(path.read_bytes(), filename=str(path))
+    load_dataset = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "load_dataset"
+    )
+    names = set()
+    for node in ast.walk(load_dataset):
+        if not (
+            isinstance(node, ast.Compare)
+            and isinstance(node.left, ast.Name)
+            and node.left.id == "dataset"
+            and len(node.ops) == 1
+            and isinstance(node.ops[0], ast.In)
+        ):
+            continue
+        names.update(ast.literal_eval(node.comparators[0]))
+    return names
+
+
 def _baseline_blob(repo_root, baseline_commit, path):
     result = subprocess.run(
         [
@@ -113,17 +174,16 @@ def test_required_top_level_classes_exist(repo_root):
     assert "PolyGINExplainer" in _top_level_classes(
         repo_root / "src/apex/explainers/algebraic_poly_gin.py"
     )
-    assert "NFECounter" in _top_level_classes(repo_root / "scripts/evaluate_nfe.py")
+    assert "NFECounter" in _top_level_classes(repo_root / "src/apex/evaluation/nfe.py")
 
 
 def test_all_layout_moves_preserve_non_import_ast(repo_root):
     assert len(MOVE_MAP) == 29
     for old_path, new_path in MOVE_MAP.items():
-        old_content = _baseline_blob(repo_root, APEX_LAYOUT_BASE_COMMIT, old_path)
-        current_path = repo_root / new_path
-        assert current_path.is_file()
+        old_content = _baseline_blob(repo_root, APEX_PRE_LAYOUT_COMMIT, old_path)
+        layout_content = _baseline_blob(repo_root, APEX_LAYOUT_COMMIT, new_path)
         assert _ast_without_imports(old_content, old_path) == _ast_without_imports(
-            current_path.read_bytes(), new_path
+            layout_content, new_path
         ), f"non-import AST changed for {old_path} -> {new_path}"
     assert not (repo_root / "GraphEXT/Source").exists()
 
@@ -165,7 +225,7 @@ def test_fsx_core_is_not_apex_only(manifest):
 def test_known_legacy_model_name_break_is_recorded(repo_root, manifest):
     ids = {item["id"] for item in manifest["known_baseline_issues"]}
     text = "\n".join(
-        (repo_root / path).read_text(encoding="utf-8")
+        _baseline_blob(repo_root, APEX_LAYOUT_COMMIT, path).decode("utf-8")
         for path in [
             "scripts/evaluate.py",
             "scripts/compare_exact_fidelity.py",
@@ -178,21 +238,159 @@ def test_known_legacy_model_name_break_is_recorded(repo_root, manifest):
 
 def test_missing_eval_stability_is_recorded(repo_root, manifest):
     ids = {item["id"] for item in manifest["known_baseline_issues"]}
-    main_tree = ast.parse((repo_root / "scripts/evaluate.py").read_bytes())
-    evaluation_tree = ast.parse((repo_root / "src/apex/evaluation/fidelity.py").read_bytes())
-    imported = {
+    assert "eval_stability" not in _top_level_functions(
+        repo_root / "src/apex/evaluation/fidelity.py"
+    )
+    assert "eval_stability" in _top_level_functions(
+        repo_root / "src/apex/evaluation/stability.py"
+    )
+    for relative_path in ["scripts/evaluate.py", "experiments/legacy/evaluate_copy.py"]:
+        tree = ast.parse((repo_root / relative_path).read_bytes())
+        imports = {
+            (node.module, alias.name)
+            for node in tree.body
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+        }
+        assert ("apex.evaluation.stability", "eval_stability") in imports
+        assert ("apex.evaluation.fidelity", "eval_stability") not in imports
+    assert "missing_eval_stability" in ids
+
+
+def test_stability_functions_preserve_candidate_ast(repo_root):
+    source_path = "experiments/legacy/evaluation_stability_candidate.py"
+    source = _baseline_blob(repo_root, APEX_LAYOUT_COMMIT, source_path)
+    target_path = repo_root / "src/apex/evaluation/stability.py"
+    target = target_path.read_bytes()
+    expected = {
+        "_perturb_irrelevant_region",
+        "_binarize_node_mask",
+        "jaccard_similarity",
+        "eval_stability",
+    }
+    assert _top_level_functions(target_path) == expected
+    for function_name in expected:
+        assert _function_ast(source, source_path, function_name) == _function_ast(
+            target, str(target_path), function_name
+        )
+
+    tree = ast.parse(target, filename=str(target_path))
+    imported_modules = {
+        node.module
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom) and node.module
+    }
+    imported_modules.update(
         alias.name
-        for node in main_tree.body
-        if isinstance(node, ast.ImportFrom) and node.module == "apex.evaluation.fidelity"
+        for node in tree.body
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    )
+    assert imported_modules == {"torch", "numpy", "apex.evaluation.fidelity"}
+
+
+def test_flowx_only_adds_explicit_sqrt_import(repo_root):
+    path = repo_root / "src/apex/explainers/flowx.py"
+    before = _baseline_blob(repo_root, APEX_LAYOUT_COMMIT, "src/apex/explainers/flowx.py")
+    current = path.read_bytes()
+    assert _ast_without_imports(before, "flowx-before.py") == _ast_without_imports(
+        current, str(path)
+    )
+    tree = ast.parse(current, filename=str(path))
+    imports = {
+        (node.module, alias.name)
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom)
         for alias in node.names
     }
-    defined = {
-        node.name for node in evaluation_tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    assert ("math", "sqrt") in imports
+
+
+def test_active_model_choices_resolve_to_current_classes(repo_root):
+    classes = _top_level_classes(repo_root / "src/apex/models/gnn.py")
+    standard = ["GCN_2l", "GCN", "GIN_2l", "GIN", "PolyGIN"]
+    expected = {
+        "scripts/evaluate.py": ("GIN", standard),
+        "scripts/evaluate_nfe.py": ("GIN", standard),
+        "scripts/evaluate_fidelity_only.py": ("GIN", standard),
+        "scripts/compare_exact_fidelity.py": ("PolyGIN", ["PolyGIN"]),
+        "scripts/train.py": ("GIN", standard),
+        "experiments/legacy/evaluate_copy.py": ("GIN", standard),
     }
-    assert "eval_stability" in imported
-    assert "eval_stability" not in defined
-    assert "missing_eval_stability" in ids
+    for relative_path, contract in expected.items():
+        assert _argument_contract(repo_root / relative_path, "--model_used") == contract
+        assert set(contract[1]) <= classes
+
+
+def test_active_dataset_choices_match_loader_branches(repo_root):
+    graph_datasets = ["BBBP", "Graph-SST2", "BACE", "Mutagenicity"]
+    all_datasets = graph_datasets + ["BA_shapes"]
+    branches = _loader_dataset_branches(repo_root / "src/apex/data/loaders.py")
+    assert branches == set(all_datasets)
+    graph_entries = [
+        "scripts/evaluate.py",
+        "scripts/evaluate_nfe.py",
+        "scripts/evaluate_fidelity_only.py",
+        "scripts/compare_exact_fidelity.py",
+        "experiments/legacy/evaluate_copy.py",
+    ]
+    for relative_path in graph_entries:
+        assert _argument_contract(repo_root / relative_path, "--dataset") == (
+            "BBBP",
+            graph_datasets,
+        )
+    assert _argument_contract(repo_root / "scripts/train.py", "--dataset") == (
+        "BBBP",
+        all_datasets,
+    )
+
+
+def test_active_scripts_have_no_legacy_3l_names(repo_root):
+    text = "\n".join(
+        path.read_text(encoding="utf-8") for path in (repo_root / "scripts").glob("*.py")
+    )
+    assert not re.search(r"\b(?:GCN|GIN|PolyGIN)_3l\b", text)
+    legacy = (repo_root / "experiments/legacy/train_imbalanced.py").read_text(
+        encoding="utf-8"
+    )
+    assert re.search(r"\b(?:GCN|GIN|PolyGIN)_3l\b", legacy)
+
+
+def test_shared_tools_are_defined_only_in_designated_modules(repo_root):
+    definitions = {"set_seed": [], "compatible_state_dict": []}
+    for path in _current_python_sources(repo_root):
+        for function_name in _top_level_functions(path):
+            if function_name in definitions:
+                definitions[function_name].append(path.relative_to(repo_root).as_posix())
+    assert definitions == {
+        "set_seed": ["src/apex/utils/reproducibility.py"],
+        "compatible_state_dict": ["src/apex/utils/checkpoints.py"],
+    }
+
+
+def test_shared_tool_functions_preserve_evaluate_baseline_ast(repo_root):
+    source_path = "scripts/evaluate.py"
+    source = _baseline_blob(repo_root, APEX_LAYOUT_COMMIT, source_path)
+    targets = {
+        "set_seed": repo_root / "src/apex/utils/reproducibility.py",
+        "compatible_state_dict": repo_root / "src/apex/utils/checkpoints.py",
+    }
+    for function_name, target_path in targets.items():
+        assert _function_ast(source, source_path, function_name) == _function_ast(
+            target_path.read_bytes(), str(target_path), function_name
+        )
+
+
+def test_nfe_counter_is_moved_out_of_entry(repo_root):
+    assert "NFECounter" not in _top_level_classes(repo_root / "scripts/evaluate_nfe.py")
+    tree = ast.parse((repo_root / "scripts/evaluate_nfe.py").read_bytes())
+    imports = {
+        (node.module, alias.name)
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    }
+    assert ("apex.evaluation.nfe", "NFECounter") in imports
 
 
 def test_current_sources_have_no_legacy_internal_imports(repo_root):

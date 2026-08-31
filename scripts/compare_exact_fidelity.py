@@ -10,10 +10,8 @@ from __future__ import annotations
 import argparse
 import os
 import os.path as osp
-import re
 import time
 import functools
-from collections import OrderedDict
 from typing import Dict, Tuple
 
 import numpy as np
@@ -34,30 +32,13 @@ from apex.models.gnn import *
 from apex.data.loaders import *
 from apex.explainers.algebraic_poly_gin import PolyGINExplainer
 from apex.explainers.pgexplainer import PGExplainer
+from apex.utils.checkpoints import compatible_state_dict
+from apex.utils.reproducibility import set_seed
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 工具
 # ─────────────────────────────────────────────────────────────────────────────
-
-def compatible_state_dict(state_dict):
-    comp = OrderedDict()
-    for key, value in state_dict.items():
-        new_key = re.sub(r'conv(1|s\.[0-9]+)\.weight',
-                         r'conv\1.lin.weight', key)
-        comp[new_key] = value.T if new_key != key else value
-    return comp
-
-
-def set_seed(seed: int = 0):
-    import random
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 模型安全前向
@@ -220,10 +201,9 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset',    type=str, default='BBBP',
-                        choices=['BBBP', 'ClinTox', 'Graph-SST2', 'Graph-Twitter',
-                                 'BA_2Motifs', 'BACE', 'Tox21', 'ToxCast'])
-    parser.add_argument('--model_used', type=str, default='PolyGIN_3l',
-                        choices=['GCN_2l', 'GCN_3l', 'GIN_2l', 'GIN_3l', 'PolyGIN_3l'])
+                        choices=['BBBP', 'Graph-SST2', 'BACE', 'Mutagenicity'])
+    parser.add_argument('--model_used', type=str, default='PolyGIN',
+                        choices=['PolyGIN'])
     parser.add_argument('--sparsity',   type=float, default=0.5)
     parser.add_argument('--dim_hidden', type=int,   default=300)
     parser.add_argument('--freeze_K',  type=int,   default=10 ** 6)
@@ -232,7 +212,7 @@ def main():
     parser.add_argument('--tau',        type=int,   default=0,
                         help='Dead-zone threshold τ: |floor(W*K)| < τ → 0. '
                              '0 = disabled (backward compatible). '
-                             'Try 100~10000 for BBBP/PolyGIN_3l.')
+                             'Try 100~10000 for BBBP/PolyGIN.')
     args = parser.parse_args()
 
     checkpoint_path = './model/checkpoint'

@@ -5,6 +5,7 @@ import numpy as np
 import random
 from apex.models.gnn import *
 from apex.data.loaders import *
+from apex.utils.reproducibility import set_seed
 import argparse
 import torch.nn as nn
 from torch.nn.functional import cross_entropy
@@ -41,16 +42,6 @@ class FocalLoss(nn.Module):
 # ───────────────────────────────────────────────
 #  工具函数
 # ───────────────────────────────────────────────
-def set_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-
 def accuracy(pred, y):
     return (pred == y).sum() / y.shape[0]
 
