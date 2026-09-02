@@ -8,7 +8,7 @@
 [![PDF](https://img.shields.io/badge/Paper-PDF-4b5563.svg)](https://arxiv.org/pdf/2607.21094)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**PolyGIN makes the prediction path polynomial; APEX then computes its attribution exactly under the paper's assumptions.**
+**APEX co-designs PolyGIN and exact quadrature to produce architecture-certified Aumann-Shapley explanations for graphs.**
 
 </div>
 
@@ -47,6 +47,19 @@ The resulting feature attributions are aggregated into signed node scores while 
 
 The active loader supports node classification on `BA_shapes` and graph classification on `BBBP`, `Graph-SST2`, `BACE`, and `Mutagenicity`. Available models are `GCN`, `GCN_2l`, `GIN`, `GIN_2l`, and `PolyGIN`.
 
+For a complete, no-download walkthrough, start with [`examples/apex_quickstart.ipynb`](examples/apex_quickstart.ipynb). The public API reduces a single-graph explanation to:
+
+```python
+from apex import APEX
+
+explanation = APEX(model, depth=4).explain(graph)
+print(explanation.node_scores)
+print(explanation.top_nodes(5))
+print(explanation.completeness_gap)
+```
+
+For repository experiments, use the command-line entries:
+
 ```powershell
 python.exe scripts/train.py --dataset BBBP --model_used PolyGIN
 python.exe scripts/evaluate.py --dataset BBBP --model_used PolyGIN --explainer PolyGINExplainer
@@ -81,6 +94,7 @@ The root must contain `pyproject.toml` and `src/apex`. Runtime paths are resolve
 
 ## Implementation
 
+- `src/apex/api.py` — high-level `APEX.explain(graph)` interface and named result
 - `src/apex/models/gnn.py` — `PolyGIN` and the shared GNN models
 - `src/apex/explainers/poly_gin.py` — main `PolyGINExplainer`
 - `src/apex/explainers/algebraic_poly_gin.py` — algebraic/exact variant
@@ -90,6 +104,7 @@ The root must contain `pyproject.toml` and `src/apex`. Runtime paths are resolve
 
 ```text
 src/apex/                installable package
+examples/                guided, runnable Notebook
 scripts/                 training, evaluation, and visualization
 experiments/variants/    method variants
 experiments/legacy/      historical experiments

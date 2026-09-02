@@ -39,6 +39,7 @@ STANDARD_LIBRARY = {
     "collections",
     "copy",
     "csv",
+    "dataclasses",
     "datetime",
     "functools",
     "io",

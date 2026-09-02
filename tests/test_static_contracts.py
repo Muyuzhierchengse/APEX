@@ -426,6 +426,7 @@ def test_lightweight_graph_tests_are_marked_and_avoid_forbidden_operations(repo_
     paths = [
         repo_root / "tests/test_lightweight_models.py",
         repo_root / "tests/test_lightweight_apex.py",
+        repo_root / "tests/test_lightweight_api.py",
         repo_root / "tests/test_lightweight_evaluation.py",
     ]
     forbidden = [
